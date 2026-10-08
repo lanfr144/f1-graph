@@ -73,6 +73,16 @@ Sur Community, ce que Neo4j ne sait pas imposer (existence, cardinalité des rel
 est vérifié après chaque chargement par `charger.py`, qui se termine en erreur si un
 invariant est violé.
 
+### Neo4j Community : une seule base utilisateur
+
+Community refuse `CREATE DATABASE` : le graphe F1 se charge alors dans la base `neo4j`,
+éventuellement à côté d'autres graphes. C'est sans risque pour eux : le chargement ne
+fait que des `MERGE` sur les étiquettes du modèle, et `--vider` n'efface que ces
+étiquettes (liste `LABELS` de `charger.py`), jamais le reste de la base.
+
+Essai de référence : Neo4j 2026.08.1 Community. Les 12 requêtes de
+`04_requetes.cypher` y ont été profilées, et chacune emprunte l'index prévu.
+
 ## Utilisation
 
 Prérequis : Python ≥ 3.11, Neo4j ≥ 5.7 (5.26 LTS ou 2025.x conseillés).

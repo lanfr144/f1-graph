@@ -3,7 +3,7 @@
     python charger.py --schema            # contraintes et index seulement
     python charger.py                     # schéma + données (idempotent : MERGE)
     python charger.py --saisons 2023 2024 # un sous-ensemble des saisons en cache
-    python charger.py --vider             # efface la base avant de charger
+    python charger.py --vider             # efface le graphe F1 (lui seul) avant de charger
 
 Connexion lue dans .env (voir .env.example) : NEO4J_URI, NEO4J_USER,
 NEO4J_PASSWORD, NEO4J_DATABASE.
@@ -247,7 +247,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--schema", action="store_true", help="appliquer le schéma seulement")
     p.add_argument("--saisons", type=int, nargs="+", help="saisons à charger (défaut : tout le cache)")
-    p.add_argument("--vider", action="store_true", help="effacer TOUS les nœuds de la base avant de charger")
+    p.add_argument("--vider", action="store_true",
+                   help="effacer les nœuds du modèle F1 (et eux seuls) avant de charger")
     args = p.parse_args()
 
     lire_env()
@@ -269,8 +270,14 @@ def main() -> int:
         with driver.session(database=base) as session:
             edition = verifier_version(session)
             if args.vider:
-                print("Effacement de la base…")
-                session.run("MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS").consume()
+                # Seules les étiquettes du modèle F1 : la base peut héberger d'autres graphes
+                # (Neo4j Community n'offre qu'une base utilisateur).
+                print("Effacement du graphe F1 :")
+                for label in LABELS:
+                    n = session.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"]
+                    session.run(f"MATCH (n:{label}) CALL {{ WITH n DETACH DELETE n }} "
+                                "IN TRANSACTIONS OF 10000 ROWS").consume()
+                    print(f"  (:{label}) {n} nœud(s) effacé(s)")
             print("Schéma :")
             appliquer_schema(session, edition)
         if donnees is None:
