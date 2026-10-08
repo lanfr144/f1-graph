@@ -1,0 +1,29 @@
+# Données extraites de l'API Jolpica-F1 : licence CC BY-NC-SA 4.0.
+# Jamais versionnées — elles se reconstituent par `python extraire.py`,
+# et leur provenance est décrite dans SOURCES.md (généré, lui, versionné).
+donnees/
+
+# Secrets : toute variante de fichier d'environnement, sauf le modèle.
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Rebuts d'éditeurs
+*.wbk
+~$*
+*.tmp
+*.bak
+*.old
+*.orig
+*.rej
+.~lock.*#
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
