@@ -27,6 +27,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import shutil
 import sys
 import time
@@ -109,18 +110,25 @@ class Extracteur:
             raise SystemExit(f"Réponse inattendue (pas de MRData) pour {url}") from e
         fichier = fichier_page(chemin_api, offset)
         fichier.parent.mkdir(parents=True, exist_ok=True)
-        fichier.write_bytes(corps)
-        fichier.with_suffix(".meta.json").write_text(json.dumps({
+        # Métadonnées d'abord, page ensuite, chacune par remplacement atomique : un
+        # processus tué ne laisse jamais une page tronquée ni une page sans métadonnées.
+        meta = fichier.with_suffix(".meta.json")
+        _ecrire_atomique(meta, json.dumps({
             "url": url,
             "recupere_le": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "sha256": hashlib.sha256(corps).hexdigest(),
             "octets": len(corps),
-        }, indent=2), encoding="utf-8")
+        }, indent=2).encode("utf-8"))
+        _ecrire_atomique(fichier, corps)
         return mr
 
     def recuperer(self, chemin_api: str, forcer: bool) -> list[dict]:
         """Toutes les pages d'un point d'accès ; depuis le cache s'il est complet."""
-        pages = lire_pages(chemin_api)
+        try:
+            pages = lire_pages(chemin_api)
+        except (ValueError, KeyError) as e:
+            log.warning("  %s : cache illisible (%s), re-téléchargement", chemin_api, e)
+            pages, forcer = [], True
         if pages and not forcer:
             total = int(pages[0]["total"])
             if len(pages) == max(1, math.ceil(total / TAILLE_PAGE)):
@@ -136,6 +144,12 @@ class Extracteur:
             pages.append(self._page(chemin_api, offset))
         log.info("  %s : %d élément(s), %d page(s)", chemin_api, total, len(pages))
         return pages
+
+
+def _ecrire_atomique(chemin, contenu: bytes) -> None:
+    provisoire = chemin.with_name(chemin.name + ".tmp")
+    provisoire.write_bytes(contenu)
+    os.replace(provisoire, chemin)
 
 
 def courses(pages: list[dict]) -> list[dict]:
