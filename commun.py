@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -9,8 +10,12 @@ from pathlib import Path
 VERSION = "0.1.0"
 
 RACINE = Path(__file__).resolve().parent
-# Réponses brutes de l'API, exclues du dépôt (voir .gitignore et SOURCES.md).
-CACHE = RACINE / "donnees" / "brut"
+# Répertoire de travail local, exclu du dépôt (voir .gitignore et SOURCES.md).
+# F1_DONNEES permet d'en utiliser un autre (essais, second jeu de données).
+DONNEES = Path(os.environ.get("F1_DONNEES") or RACINE / "donnees").resolve()
+CACHE = DONNEES / "brut"            # réponses brutes de l'API
+JOURNAUX = DONNEES / "journaux"     # journaux et traces d'avancement
+ETAT = DONNEES / "etat.json"        # point de reprise de pipeline.py
 SCHEMA = RACINE / "schema"
 
 API = "https://api.jolpi.ca/ergast/f1/"
@@ -37,6 +42,51 @@ def exiger_env(nom: str) -> str:
     if not valeur:
         raise SystemExit(f"Variable d'environnement manquante : {nom} (voir .env.example)")
     return valeur
+
+
+class Verrou:
+    """Interdit deux traitements simultanés sur le même répertoire de données.
+
+    Verrou posé par le système d'exploitation sur un fichier ouvert : il tombe
+    de lui-même à la fin du processus, même tué — aucun verrou orphelin à nettoyer.
+    """
+
+    def __init__(self) -> None:
+        self.chemin = DONNEES / "traitement.lock"
+        self.fichier = None
+
+    def __enter__(self) -> "Verrou":
+        self.chemin.parent.mkdir(parents=True, exist_ok=True)
+        self.fichier = open(self.chemin, "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.fichier.seek(0)
+                msvcrt.locking(self.fichier.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fichier.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.fichier.close()
+            raise SystemExit(f"Un autre traitement utilise déjà {DONNEES} "
+                             f"(verrou {self.chemin.name}) : attendre sa fin.") from None
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if os.name == "nt":
+            import msvcrt
+            self.fichier.seek(0)
+            try:
+                msvcrt.locking(self.fichier.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        self.fichier.close()
+
+
+def journal_console(niveau: int = logging.INFO) -> None:
+    """Sortie console sobre pour les scripts lancés seuls (extraire.py, charger.py)."""
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=niveau, format="%(message)s", stream=sys.stdout)
 
 
 def dossier_cache(chemin_api: str) -> Path:

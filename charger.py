@@ -20,10 +20,11 @@ termine en erreur si l'un d'eux échoue.
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import sys
 
-from commun import SCHEMA, exiger_env, lire_env
+from commun import SCHEMA, Verrou, exiger_env, journal_console, lire_env
 from transformer import DonneeInvalide, transformer
 
 try:
@@ -32,6 +33,8 @@ except ImportError:
     raise SystemExit("Module 'neo4j' absent : pip install -r requirements.txt (dans le .venv)")
 
 LOT = 5000
+
+log = logging.getLogger("f1.chargement")
 
 
 # --- Schéma ------------------------------------------------------------------
@@ -52,7 +55,7 @@ def verifier_version(session) -> str:
     if not m or (int(m[1]), int(m[2])) < (5, 7):
         raise SystemExit(f"Neo4j {version} : la version 5.7 au moins est requise "
                          "(contraintes d'unicité sur les relations).")
-    print(f"Neo4j {version} ({edition})")
+    log.info("Neo4j %s (%s)", version, edition)
     return edition
 
 
@@ -61,13 +64,13 @@ def appliquer_schema(session, edition: str) -> None:
     if edition == "enterprise":
         fichiers.insert(1, SCHEMA / "02_contraintes_enterprise.cypher")
     else:
-        print("  édition community : 02_contraintes_enterprise.cypher non applicable, "
-              "les invariants seront contrôlés après chargement")
+        log.info("  édition community : 02_contraintes_enterprise.cypher non applicable, "
+                 "les invariants seront contrôlés après chargement")
     for f in fichiers:
         liste = instructions(f)
         for i in liste:
             session.run(i).consume()
-        print(f"  {f.name} : {len(liste)} instruction(s)")
+        log.info("  %s : %d instruction(s)", f.name, len(liste))
     session.run("CALL db.awaitIndexes(600)").consume()
 
 
@@ -84,7 +87,7 @@ def executer(driver, base: str, requete: str, lignes: list[dict], quoi: str) -> 
                 raise SystemExit(f"{quoi} : {len(lot) - n} ligne(s) sur {len(lot)} sans extrémité "
                                  "trouvée en base (nœud absent). Chargement interrompu.")
             traitees += n
-    print(f"  {quoi:42} {traitees:>8}")
+    log.info("  %-42s %8d", quoi, traitees)
 
 
 def noeuds(driver, base, label: str, cle: str, lignes: list[dict], extra: str = "") -> None:
@@ -126,7 +129,22 @@ def paires(lignes: list[dict], a: str, b: str) -> list[dict]:
 
 
 def charger(driver, base: str, d: dict[str, list[dict]]) -> None:
-    # Nœuds de référence
+    charger_referentiels(driver, base, d)
+    charger_saison(driver, base, d)
+
+
+def charger_referentiels(driver, base: str, d: dict[str, list[dict]], deja: dict[str, set] | None = None) -> None:
+    """Saisons, circuits, pilotes, écuries, statuts, pays, nationalités.
+
+    `deja` (clés par catégorie) restreint l'écriture aux éléments encore inconnus :
+    un chargement par saison n'ajoute ainsi que les pilotes ou écuries absents
+    des listes de référence de l'API, sans réécrire les autres.
+    """
+    if deja:
+        d = {**d, **{cat: [x for x in d[cat] if x["k"] not in deja.get(cat, set())]
+                     for cat in ("saisons", "circuits", "pilotes", "constructeurs", "statuts")}}
+    if not any(d[cat] for cat in ("saisons", "circuits", "pilotes", "constructeurs", "statuts")):
+        return
     noeuds(driver, base, "Season", "year", d["saisons"])
     noeuds(driver, base, "Circuit", "circuitId", d["circuits"],
            extra="SET n.location = CASE WHEN l.lat IS NULL OR l.lng IS NULL THEN null "
@@ -147,7 +165,11 @@ def charger(driver, base: str, d: dict[str, list[dict]]) -> None:
     lien_unique(driver, base, "Constructor", "constructorId", "HAS_NATIONALITY", "Nationality", "name",
                 [{"a": x["k"], "b": x["nationality"]} for x in d["constructeurs"] if x["nationality"]])
 
-    # Courses
+
+def charger_saison(driver, base: str, d: dict[str, list[dict]]) -> None:
+    """Courses, résultats, arrêts, tours, écuries par saison, classements."""
+    if not d["courses"]:
+        return
     noeuds(driver, base, "Race", "raceId", d["courses"])
     lien_unique(driver, base, "Race", "raceId", "IN_SEASON", "Season", "year",
                 [{"a": c["k"], "b": c["season"]} for c in d["courses"]])
@@ -174,7 +196,7 @@ def charger(driver, base: str, d: dict[str, list[dict]]) -> None:
     for label, cle_label, cle in (("PitStop", "pitStopId", "arrets"), ("LapTime", "lapTimeId", "tours")):
         lignes = d[cle]
         if not lignes:
-            print(f"  (:{label}) : rien en cache, non chargé")
+            log.debug("  (:%s) : rien en cache pour ce périmètre", label)
             continue
         noeuds(driver, base, label, cle_label, lignes)
         lien_unique(driver, base, label, cle_label, "IN_RACE", "Race", "raceId",
@@ -220,20 +242,23 @@ INVARIANTS = {
 
 def controler(session) -> bool:
     ok = True
-    print("Contrôles d'invariants :")
+    log.info("Contrôles d'invariants :")
     for libelle, requete in INVARIANTS.items():
         n = session.run(requete).single()["n"]
-        print(f"  {'OK ' if n == 0 else 'ÉCHEC'} {libelle}" + ("" if n == 0 else f" : {n}"))
+        if n == 0:
+            log.info("  OK    %s", libelle)
+        else:
+            log.error("  ÉCHEC %s : %d", libelle, n)
         ok &= n == 0
     # Étiquettes et types connus du modèle : chaque comptage est servi par le
     # magasin de comptes de Neo4j, sans parcourir la base.
-    print("Volumétrie :")
+    log.info("Volumétrie :")
     for label in LABELS:
         n = session.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"]
-        print(f"  (:{label}){'':{22 - len(label)}}{n:>10}")
+        log.info("  %-24s %10d", f"(:{label})", n)
     for rel in RELATIONS:
         n = session.run(f"MATCH ()-[r:{rel}]->() RETURN count(r) AS n").single()["n"]
-        print(f"  [:{rel}]{'':{22 - len(rel)}}{n:>10}")
+        log.info("  %-24s %10d", f"[:{rel}]", n)
     return ok
 
 
@@ -243,6 +268,30 @@ RELATIONS = ("LOCATED_IN", "HAS_NATIONALITY", "IN_SEASON", "HELD_AT", "IN_RACE",
              "FOR_CONSTRUCTOR", "WITH_STATUS", "DROVE_FOR", "RANKED_IN")
 
 
+def connexion():
+    """Pilote Neo4j et nom de base, lus dans .env ; la connexion est vérifiée."""
+    lire_env()
+    uri, base = exiger_env("NEO4J_URI"), exiger_env("NEO4J_DATABASE")
+    driver = GraphDatabase.driver(uri, auth=(exiger_env("NEO4J_USER"), exiger_env("NEO4J_PASSWORD")))
+    try:
+        driver.verify_connectivity()
+    except Exception:
+        driver.close()
+        raise
+    return driver, base
+
+
+def vider(session) -> None:
+    """Efface les nœuds du modèle F1, et eux seuls : la base peut héberger d'autres
+    graphes (Neo4j Community n'offre qu'une base utilisateur)."""
+    log.info("Effacement du graphe F1 :")
+    for label in LABELS:
+        n = session.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"]
+        session.run(f"MATCH (n:{label}) CALL {{ WITH n DETACH DELETE n }} "
+                    "IN TRANSACTIONS OF 10000 ROWS").consume()
+        log.info("  (:%s) %d nœud(s) effacé(s)", label, n)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--schema", action="store_true", help="appliquer le schéma seulement")
@@ -250,42 +299,33 @@ def main() -> int:
     p.add_argument("--vider", action="store_true",
                    help="effacer les nœuds du modèle F1 (et eux seuls) avant de charger")
     args = p.parse_args()
+    journal_console()
 
-    lire_env()
-    uri, base = exiger_env("NEO4J_URI"), exiger_env("NEO4J_DATABASE")
-    auth = (exiger_env("NEO4J_USER"), exiger_env("NEO4J_PASSWORD"))
+    with Verrou():
+        donnees = None
+        if not args.schema:
+            # Transformer AVANT de toucher la base : une donnée invalide n'écrit rien.
+            try:
+                donnees = transformer(args.saisons)
+            except DonneeInvalide as e:
+                raise SystemExit(f"Données invalides, rien n'a été chargé : {e}") from None
+            if not donnees["courses"]:
+                raise SystemExit("Aucune course en cache : lancer d'abord extraire.py.")
 
-    donnees = None
-    if not args.schema:
-        # Transformer AVANT de toucher la base : une donnée invalide n'écrit rien.
-        try:
-            donnees = transformer(args.saisons)
-        except DonneeInvalide as e:
-            raise SystemExit(f"Données invalides, rien n'a été chargé : {e}") from None
-        if not donnees["courses"]:
-            raise SystemExit("Aucune course en cache : lancer d'abord extraire.py.")
-
-    with GraphDatabase.driver(uri, auth=auth) as driver:
-        driver.verify_connectivity()
-        with driver.session(database=base) as session:
-            edition = verifier_version(session)
-            if args.vider:
-                # Seules les étiquettes du modèle F1 : la base peut héberger d'autres graphes
-                # (Neo4j Community n'offre qu'une base utilisateur).
-                print("Effacement du graphe F1 :")
-                for label in LABELS:
-                    n = session.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"]
-                    session.run(f"MATCH (n:{label}) CALL {{ WITH n DETACH DELETE n }} "
-                                "IN TRANSACTIONS OF 10000 ROWS").consume()
-                    print(f"  (:{label}) {n} nœud(s) effacé(s)")
-            print("Schéma :")
-            appliquer_schema(session, edition)
-        if donnees is None:
-            return 0
-        print("Chargement :")
-        charger(driver, base, donnees)
-        with driver.session(database=base) as session:
-            return 0 if controler(session) else 1
+        driver, base = connexion()
+        with driver:
+            with driver.session(database=base) as session:
+                edition = verifier_version(session)
+                if args.vider:
+                    vider(session)
+                log.info("Schéma :")
+                appliquer_schema(session, edition)
+            if donnees is None:
+                return 0
+            log.info("Chargement :")
+            charger(driver, base, donnees)
+            with driver.session(database=base) as session:
+                return 0 if controler(session) else 1
 
 
 if __name__ == "__main__":

@@ -269,7 +269,8 @@ def verifier_unicite(lignes: list[dict], cle: str, nom: str) -> None:
 # --- Transformation complète -------------------------------------------------
 
 def transformer(saisons: list[int] | None = None) -> dict[str, list[dict]]:
-    saisons = saisons or saisons_en_cache()
+    # None : toutes les saisons en cache ; [] : référentiels seuls, aucune saison.
+    saisons = saisons_en_cache() if saisons is None else saisons
 
     pilotes: dict[str, dict] = {}
     constructeurs: dict[str, dict] = {}

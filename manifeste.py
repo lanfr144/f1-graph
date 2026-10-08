@@ -19,7 +19,11 @@ import sys
 import urllib.request
 from collections import defaultdict
 
-from commun import CACHE, RACINE, USER_AGENT
+from commun import CACHE, DONNEES, RACINE, USER_AGENT
+
+# Le SOURCES.md versionné ne décrit que le répertoire de données par défaut ; un
+# autre répertoire (F1_DONNEES) reçoit le sien, pour ne pas écraser celui du dépôt.
+SORTIE = RACINE / "SOURCES.md" if DONNEES == (RACINE / "donnees").resolve() else DONNEES / "SOURCES.md"
 
 CONDITIONS = "https://raw.githubusercontent.com/jolpica/jolpica-f1/main/TERMS.md"
 CONDITIONS_PAGE = "https://github.com/jolpica/jolpica-f1/blob/main/TERMS.md"
@@ -54,11 +58,11 @@ def main() -> int:
         meta = json.loads(m.read_text(encoding="utf-8"))
         donnees = m.with_name(m.name.replace(".meta.json", ".json"))
         if not donnees.exists():
-            anomalies.append(f"{donnees.relative_to(RACINE)} : fichier absent")
+            anomalies.append(f"{donnees.relative_to(CACHE).as_posix()} : fichier absent")
             continue
         sha = hashlib.sha256(donnees.read_bytes()).hexdigest()
         if sha != meta["sha256"]:
-            anomalies.append(f"{donnees.relative_to(RACINE)} : empreinte modifiée depuis l'extraction")
+            anomalies.append(f"{donnees.relative_to(CACHE).as_posix()} : empreinte modifiée depuis l'extraction")
         relatif = donnees.relative_to(CACHE).as_posix()
         groupe = relatif.split("/")[0]
         par_groupe[groupe].append(meta["recupere_le"])
@@ -104,8 +108,8 @@ def main() -> int:
                "| Fichier | URL | SHA-256 | Récupéré le |", "|---|---|---|---|"]
     sortie += [f"| `{f}` | <{u}> | `{s}` | {d} |" for f, u, s, d in lignes]
 
-    (RACINE / "SOURCES.md").write_text("\n".join(sortie) + "\n", encoding="utf-8")
-    print(f"SOURCES.md : {len(lignes)} fichier(s), {len(anomalies)} anomalie(s), "
+    SORTIE.write_text("\n".join(sortie) + "\n", encoding="utf-8")
+    print(f"{SORTIE.name} ({SORTIE.parent}) : {len(lignes)} fichier(s), {len(anomalies)} anomalie(s), "
           f"licence {'relue' if c['licence'] else 'NON VÉRIFIÉE'}")
     return 1 if anomalies or c["erreur"] else 0
 

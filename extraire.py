@@ -16,6 +16,8 @@ l'identique grâce au cache.
 
 La saison en cours est toujours re-téléchargée (ses résultats évoluent) ; les
 saisons closes ne le sont qu'avec --forcer.
+
+Pour enchaîner extraction et chargement avec reprise et journaux : pipeline.py.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import logging
 import math
 import shutil
 import sys
@@ -32,7 +35,13 @@ import urllib.parse
 import urllib.request
 from collections import deque
 
-from commun import API, TAILLE_PAGE, USER_AGENT, dossier_cache, fichier_page, lire_pages
+from commun import (API, TAILLE_PAGE, USER_AGENT, Verrou, dossier_cache, fichier_page,
+                    journal_console, lire_pages)
+
+log = logging.getLogger("f1.extraction")
+
+REFERENTIELS = ("circuits", "drivers", "constructors", "status")
+POINTS_SAISON = ("races", "results", "qualifying", "sprint", "driverstandings", "constructorstandings")
 
 
 class Limiteur:
@@ -50,8 +59,8 @@ class Limiteur:
         if len(self.instants) >= self.par_heure:
             pause = 3600 - (maintenant - self.instants[0]) + 1
             reprise = dt.datetime.now() + dt.timedelta(seconds=pause)
-            print(f"  quota horaire atteint ({self.par_heure} requêtes) : "
-                  f"pause jusqu'à {reprise:%H:%M:%S}", flush=True)
+            log.info("  quota horaire atteint (%d requêtes) : pause jusqu'à %s",
+                     self.par_heure, f"{reprise:%H:%M:%S}")
             time.sleep(pause)
         if self.instants:
             ecart = time.monotonic() - self.instants[-1]
@@ -64,6 +73,7 @@ class Extracteur:
     def __init__(self, limiteur: Limiteur) -> None:
         self.limiteur = limiteur
         self.requetes = 0
+        self.refus = 0  # réponses 429 / 5xx / réseau, suivies d'un nouvel essai
 
     def _get(self, url: str) -> bytes:
         for tentative in range(1, 7):
@@ -76,14 +86,16 @@ class Extracteur:
                     return reponse.read()
             except urllib.error.HTTPError as e:
                 if e.code == 429 or e.code >= 500:
+                    self.refus += 1
                     attente = int(e.headers.get("Retry-After") or 0) or min(30 * 2 ** (tentative - 1), 900)
-                    print(f"  HTTP {e.code} sur {url} : nouvel essai dans {attente} s", flush=True)
+                    log.warning("  HTTP %d sur %s : nouvel essai %d/6 dans %d s", e.code, url, tentative, attente)
                     time.sleep(attente)
                     continue
                 raise SystemExit(f"HTTP {e.code} sur {url} : {e.reason}") from e
             except (urllib.error.URLError, TimeoutError) as e:
+                self.refus += 1
                 attente = min(30 * 2 ** (tentative - 1), 900)
-                print(f"  erreur réseau ({e}) sur {url} : nouvel essai dans {attente} s", flush=True)
+                log.warning("  erreur réseau (%s) sur %s : nouvel essai %d/6 dans %d s", e, url, tentative, attente)
                 time.sleep(attente)
         raise SystemExit(f"Abandon après 6 tentatives : {url}")
 
@@ -112,6 +124,7 @@ class Extracteur:
         if pages and not forcer:
             total = int(pages[0]["total"])
             if len(pages) == max(1, math.ceil(total / TAILLE_PAGE)):
+                log.debug("  %s : en cache (%d page(s))", chemin_api, len(pages))
                 return pages
         if forcer and dossier_cache(chemin_api).exists():
             # Repartir de zéro : des pages surnuméraires d'un ancien total resteraient sinon.
@@ -121,12 +134,49 @@ class Extracteur:
         total = int(premiere["total"])
         for offset in range(TAILLE_PAGE, total, TAILLE_PAGE):
             pages.append(self._page(chemin_api, offset))
-        print(f"  {chemin_api} : {total} élément(s), {len(pages)} page(s)", flush=True)
+        log.info("  %s : %d élément(s), %d page(s)", chemin_api, total, len(pages))
         return pages
 
 
 def courses(pages: list[dict]) -> list[dict]:
     return [r for p in pages for r in p["RaceTable"]["Races"]]
+
+
+def extraire_referentiels(ex: Extracteur) -> list[int]:
+    """Saisons, circuits, pilotes, écuries, statuts : toujours rafraîchis.
+
+    Renvoie la liste des saisons connues de l'API.
+    """
+    saisons = [int(s["season"]) for page in ex.recuperer("seasons", forcer=True)
+               for s in page["SeasonTable"]["Seasons"]]
+    if not saisons:
+        raise SystemExit("L'API ne renvoie aucune saison : abandon.")
+    for chemin in REFERENTIELS:
+        ex.recuperer(chemin, forcer=True)
+    return saisons
+
+
+def extraire_saison(ex: Extracteur, saison: int, forcer: bool) -> list[dict]:
+    """Calendrier, résultats, qualifications, sprints, classements. Renvoie le calendrier."""
+    calendrier = courses(ex.recuperer(f"{saison}/races", forcer))
+    for point in POINTS_SAISON[1:]:
+        ex.recuperer(f"{saison}/{point}", forcer)
+    return calendrier
+
+
+def courses_disputees(saison: int) -> list[int]:
+    """Manches déjà courues d'après le calendrier en cache (les suivantes n'ont pas de données)."""
+    aujourd_hui = dt.date.today()
+    return [int(c["round"]) for c in courses(lire_pages(f"{saison}/races"))
+            if dt.date.fromisoformat(c["date"]) <= aujourd_hui]
+
+
+def extraire_par_course(ex: Extracteur, saison: int, point: str, forcer: bool) -> int:
+    """'pitstops' ou 'laps', une course après l'autre. Renvoie le nombre de courses traitées."""
+    manches = courses_disputees(saison)
+    for manche in manches:
+        ex.recuperer(f"{saison}/{manche}/{point}", forcer)
+    return len(manches)
 
 
 def main() -> int:
@@ -139,42 +189,28 @@ def main() -> int:
     p.add_argument("--par-heure", type=int, default=480,
                    help="plafond horaire de requêtes (défaut 480, sous la limite de 500 de l'API)")
     args = p.parse_args()
+    journal_console()
 
-    ex = Extracteur(Limiteur(args.par_heure, intervalle=0.5))
-    aujourd_hui = dt.date.today()
+    with Verrou():
+        ex = Extracteur(Limiteur(args.par_heure, intervalle=0.5))
+        saisons = extraire_referentiels(ex)
+        saison_en_cours = max(saisons)
+        debut = args.de or min(saisons)
+        fin = args.a or saison_en_cours
+        retenues = [s for s in saisons if debut <= s <= fin]
+        if not retenues:
+            raise SystemExit(f"Aucune saison connue de l'API entre {debut} et {fin}.")
 
-    # Référentiels globaux : toujours rafraîchis (un nouveau pilote peut apparaître).
-    saisons = [int(s["season"]) for page in ex.recuperer("seasons", forcer=True)
-               for s in page["SeasonTable"]["Seasons"]]
-    if not saisons:
-        raise SystemExit("L'API ne renvoie aucune saison : abandon.")
-    saison_en_cours = max(saisons)
-    for chemin in ("circuits", "drivers", "constructors", "status"):
-        ex.recuperer(chemin, forcer=True)
+        for saison in retenues:
+            forcer = args.forcer or saison == saison_en_cours
+            log.info("Saison %d%s", saison, " (en cours)" if saison == saison_en_cours else "")
+            extraire_saison(ex, saison, forcer)
+            if args.arrets:
+                extraire_par_course(ex, saison, "pitstops", forcer)
+            if args.tours:
+                extraire_par_course(ex, saison, "laps", forcer)
 
-    debut = args.de or min(saisons)
-    fin = args.a or saison_en_cours
-    retenues = [s for s in saisons if debut <= s <= fin]
-    if not retenues:
-        raise SystemExit(f"Aucune saison connue de l'API entre {debut} et {fin}.")
-
-    for saison in retenues:
-        forcer = args.forcer or saison == saison_en_cours
-        print(f"Saison {saison}{' (en cours)' if saison == saison_en_cours else ''}", flush=True)
-        calendrier = courses(ex.recuperer(f"{saison}/races", forcer))
-        for point in ("results", "qualifying", "sprint", "driverstandings", "constructorstandings"):
-            ex.recuperer(f"{saison}/{point}", forcer)
-        if args.arrets or args.tours:
-            for course in calendrier:
-                if dt.date.fromisoformat(course["date"]) > aujourd_hui:
-                    continue  # course à venir : rien à extraire
-                manche = int(course["round"])
-                if args.arrets:
-                    ex.recuperer(f"{saison}/{manche}/pitstops", forcer)
-                if args.tours:
-                    ex.recuperer(f"{saison}/{manche}/laps", forcer)
-
-    print(f"Terminé : {ex.requetes} requête(s) émise(s). Cache : donnees/brut/")
+    log.info("Terminé : %d requête(s) émise(s). Cache : donnees/brut/", ex.requetes)
     return 0
 
 

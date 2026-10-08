@@ -99,16 +99,51 @@ python -m venv .venv
 cp .env.example .env
 ```
 
+### Tout en une commande, relançable : `pipeline.py`
+
+```bash
+.venv/Scripts/python pipeline.py --arrets-depuis 2011
+```
+
+Enchaîne référentiels, schéma, puis pour chaque saison extraction et chargement,
+enfin contrôles d'invariants et manifeste. Chaque étape terminée est inscrite dans
+`donnees/etat.json` : **après une interruption, relancer la même commande** reprend à
+la première étape non faite, que l'arrêt vienne d'un Ctrl+C, d'une coupure réseau,
+d'un processus tué ou de Neo4j indisponible. Une étape en échec est retentée à la
+relance ; celles qui en dépendent sont marquées « bloquées », les autres continuent.
+
+| Option | Effet |
+|---|---|
+| `--de 2020 --a 2024` | intervalle de saisons (défaut : toutes) |
+| `--arrets-depuis 2011` | arrêts au stand à partir de cette saison (données depuis 2011) |
+| `--tours-depuis 2024` | temps au tour (données depuis 1996 ; ~15 requêtes par course) |
+| `--sans-extraction` | aucun accès réseau : charger le cache tel qu'il est |
+| `--sans-chargement` | extraire seulement, sans toucher Neo4j |
+| `--etat` | afficher l'avancement enregistré, sans rien exécuter |
+| `--recommencer` | abandonner l'exécution inachevée et repartir de zéro |
+| `--verbeux` | niveau DEBUG aussi à l'écran |
+
+Traces, dans `donnees/journaux/` :
+
+- `pipeline-AAAAMMJJ-HHMMSS.log` : journal complet de chaque exécution, niveau DEBUG,
+  avec la trace Python de toute erreur ;
+- `avancement.jsonl` : un événement JSON par début, fin, échec ou blocage d'étape,
+  cumulé d'une exécution à l'autre (`etape`, `duree_s`, `requetes`, `refus_api`, `erreur`).
+
+Codes de sortie : `0` succès, `1` étape en échec ou bloquée, `2` un autre traitement
+utilise déjà `donnees/` (verrou), `130` interruption.
+
+### Étape par étape
+
 1. **Extraire** vers le cache local `donnees/brut/` (rien n'est écrit dans Neo4j) :
 
    ```bash
    .venv/Scripts/python extraire.py
    ```
 
-   Options : `--de 2011 --a 2024`, `--arrets` (arrêts au stand), `--tours` (temps au
-   tour, environ 15 requêtes par course), `--forcer`. L'API limite à 500 requêtes par
-   heure : l'extraction complète de base en demande environ 700, le script temporise
-   seul et reprend là où il s'était arrêté.
+   Options : `--de 2011 --a 2024`, `--arrets`, `--tours`, `--forcer`. L'API limite à
+   500 requêtes par heure : le script temporise seul ; ce qui est en cache n'est pas
+   redemandé.
 
 2. **Charger** (schéma, puis données, puis contrôles) :
 
