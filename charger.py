@@ -30,7 +30,8 @@ from transformer import DonneeInvalide, transformer
 try:
     from neo4j import GraphDatabase
 except ImportError:
-    raise SystemExit("Module 'neo4j' absent : pip install -r requirements.txt (dans le .venv)")
+    raise SystemExit(f"Module 'neo4j' absent de l'interpréteur {sys.executable} : utiliser celui "
+                     "du .venv (.venv/Scripts/python sous Windows), ou pip install -r requirements.txt")
 
 LOT = 5000
 

@@ -274,7 +274,26 @@ def afficher_etat() -> int:
     return 0
 
 
+def prerequis_manquants(args) -> list[str]:
+    """Ce qui ferait échouer une étape à coup sûr : vérifié avant de commencer."""
+    manque = []
+    if not args.sans_chargement:
+        try:
+            import neo4j  # noqa: F401
+        except ImportError:
+            manque.append(f"module 'neo4j' absent de l'interpréteur {sys.executable} — lancer "
+                          "avec celui du .venv (.venv/Scripts/python sous Windows), ou "
+                          "ajouter --sans-chargement pour n'extraire que les données")
+    return manque
+
+
 def executer(args) -> int:
+    manque = prerequis_manquants(args)
+    if manque:
+        for m in manque:
+            print(f"Prérequis manquant : {m}", file=sys.stderr)
+        print("Rien n'a été exécuté ; le point de reprise est inchangé.", file=sys.stderr)
+        return 1
     fichier_journal = configurer_journaux(args.verbeux)
     parametres = {k: getattr(args, k) for k in ("de", "a", "arrets_depuis", "tours_depuis",
                                                 "sans_extraction", "sans_chargement")}
@@ -290,6 +309,7 @@ def executer(args) -> int:
         etat.ouvrir(parametres)
         log.info("NOUVELLE exécution %s", etat.execution["id"])
     log.info("Données : %s — journal : %s", DONNEES, fichier_journal)
+    log.info("Interpréteur : %s (Python %s, %s)", sys.executable, sys.version.split()[0], sys.platform)
     tracer("execution_debut", execution=etat.execution["id"], parametres=parametres,
            reprise=etat.execution.get("reprises", 0) > 0)
     t0 = time.monotonic()
