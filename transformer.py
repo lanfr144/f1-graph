@@ -11,10 +11,18 @@ Règles :
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import sys
 from collections import Counter
 
 from commun import CACHE, lire_pages
+
+log = logging.getLogger("f1.transformation")
+
+# Représentations d'une absence de valeur rencontrées dans la source. L'API publie
+# parfois le texte "None" (un None Python sérialisé tel quel) au lieu de null : par
+# exemple le numéro de voiture de six engagés forfaits en 1961-1963.
+NULS_SOURCE = ("", "None", "null")
 
 
 class DonneeInvalide(ValueError):
@@ -24,7 +32,7 @@ class DonneeInvalide(ValueError):
 # --- Conversions ------------------------------------------------------------
 
 def _vide(v) -> bool:
-    return v is None or v == ""
+    return v is None or v in NULS_SOURCE
 
 
 def entier(v, ctx: str) -> int | None:
@@ -184,11 +192,23 @@ def _course(r: dict) -> dict:
     return {"k": rid, "season": int(r["season"]), "circuitId": r["Circuit"]["circuitId"], "p": p}
 
 
+def cle_resultat(rid: str, numero, pilote: str, quoi: str) -> str:
+    """'AAAA-RR-<numéro>-<pilote>' ; sans numéro, 'AAAA-RR-sans-numero-<pilote>'.
+
+    Le numéro distingue deux voitures d'un même pilote dans une course (années 1950).
+    Quand la source n'en donne pas, la clé s'en passe ; si elle n'est alors plus
+    unique, verifier_unicite() arrêtera tout avant chargement.
+    """
+    if _vide(numero):
+        log.warning("%s %s %s : numéro de voiture absent dans la source (%r), clé sans numéro",
+                    quoi, rid, pilote, numero)
+        return f"{rid}-sans-numero-{pilote}"
+    return f"{rid}-{numero}-{pilote}"
+
+
 def _resultat(rid: str, x: dict, avec_vitesse: bool) -> dict:
     pilote = x["Driver"]["driverId"]
     numero = x.get("number")
-    if _vide(numero):
-        raise DonneeInvalide(f"course {rid} pilote {pilote} : numéro de voiture absent, clé impossible")
     ctx = f"résultat {rid} {pilote}"
     temps = x.get("Time") or {}
     mt = x.get("FastestLap") or {}
@@ -214,7 +234,7 @@ def _resultat(rid: str, x: dict, avec_vitesse: bool) -> dict:
     if p["positionText"] is None or p["points"] is None:
         raise DonneeInvalide(f"{ctx} : positionText ou points absent")
     return {
-        "k": f"{rid}-{numero}-{pilote}",
+        "k": cle_resultat(rid, numero, pilote, "résultat"),
         "raceId": rid,
         "driverId": pilote,
         "constructorId": x["Constructor"]["constructorId"],
@@ -226,14 +246,12 @@ def _resultat(rid: str, x: dict, avec_vitesse: bool) -> dict:
 def _qualif(rid: str, x: dict) -> dict:
     pilote = x["Driver"]["driverId"]
     numero = x.get("number")
-    if _vide(numero):
-        raise DonneeInvalide(f"qualification {rid} pilote {pilote} : numéro absent, clé impossible")
     ctx = f"qualification {rid} {pilote}"
     p = {"number": entier(numero, ctx), "position": entier(x.get("position"), ctx)}
     for q in ("Q1", "Q2", "Q3"):
         p[q.lower()] = x.get(q) or None
         p[f"{q.lower()}Millis"] = chrono_ms(x.get(q), f"{ctx} {q}")
-    return {"k": f"{rid}-{numero}-{pilote}", "raceId": rid, "driverId": pilote,
+    return {"k": cle_resultat(rid, numero, pilote, "qualification"), "raceId": rid, "driverId": pilote,
             "constructorId": x["Constructor"]["constructorId"], "p": p}
 
 

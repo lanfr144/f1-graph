@@ -133,6 +133,20 @@ Traces, dans `donnees/journaux/` :
 Codes de sortie : `0` succès, `1` étape en échec ou bloquée, `2` un autre traitement
 utilise déjà `donnees/` (verrou), `130` interruption.
 
+### Vérifier la base : `verifier.py`
+
+```bash
+.venv/Scripts/python verifier.py
+```
+
+En lecture seule : contraintes et index présents et `ONLINE`, invariants, puis
+rapprochement **saison par saison** entre le cache (après transformation) et la base,
+nombre par nombre (courses, résultats, qualifications, sprints, arrêts, tours,
+`DROVE_FOR`, `RANKED_IN`). Chaque saison est déclarée complète, partielle (écarts
+listés), absente de la base ou du cache. Suivent des contrôles métier : un vainqueur
+par course disputée, un champion par saison close, victoires au classement cohérentes
+avec les résultats chargés. Code de sortie 1 au moindre écart.
+
 ### Étape par étape
 
 1. **Extraire** vers le cache local `donnees/brut/` (rien n'est écrit dans Neo4j) :
