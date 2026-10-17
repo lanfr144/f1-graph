@@ -61,9 +61,9 @@ def verifier_version(session) -> str:
 
 
 def appliquer_schema(session, edition: str) -> None:
-    fichiers = [SCHEMA / "01_contraintes.cypher", SCHEMA / "03_index.cypher"]
+    fichiers = [SCHEMA / "00_migrations.cypher", SCHEMA / "01_contraintes.cypher", SCHEMA / "03_index.cypher"]
     if edition == "enterprise":
-        fichiers.insert(1, SCHEMA / "02_contraintes_enterprise.cypher")
+        fichiers.insert(2, SCHEMA / "02_contraintes_enterprise.cypher")
     else:
         log.info("  édition community : 02_contraintes_enterprise.cypher non applicable, "
                  "les invariants seront contrôlés après chargement")
@@ -146,6 +146,10 @@ def charger_referentiels(driver, base: str, d: dict[str, list[dict]], deja: dict
                      for cat in ("saisons", "circuits", "pilotes", "constructeurs", "statuts")}}
     if not any(d[cat] for cat in ("saisons", "circuits", "pilotes", "constructeurs", "statuts")):
         return
+    # Un seul nœud par code ISO 3166 alpha-3, porteur des deux étiquettes : il est à la
+    # fois le pays d'un circuit et la nationalité d'un pilote ou d'une écurie.
+    executer(driver, base, "UNWIND $lignes AS l MERGE (n:Country {iso3: l.k}) SET n:Nationality, n += l.p "
+             "RETURN count(*) AS n", d["pays"], "(:Country:Nationality)")
     noeuds(driver, base, "Season", "year", d["saisons"])
     noeuds(driver, base, "Circuit", "circuitId", d["circuits"],
            extra="SET n.location = CASE WHEN l.lat IS NULL OR l.lng IS NULL THEN null "
@@ -154,16 +158,11 @@ def charger_referentiels(driver, base: str, d: dict[str, list[dict]], deja: dict
     noeuds(driver, base, "Constructor", "constructorId", d["constructeurs"])
     noeuds(driver, base, "Status", "name", d["statuts"])
 
-    pays = sorted({c["country"] for c in d["circuits"] if c["country"]})
-    noeuds(driver, base, "Country", "name", [{"k": p, "p": {}} for p in pays])
-    nationalites = sorted({x["nationality"] for x in d["pilotes"] + d["constructeurs"] if x["nationality"]})
-    noeuds(driver, base, "Nationality", "name", [{"k": n, "p": {}} for n in nationalites])
-
-    lien_unique(driver, base, "Circuit", "circuitId", "LOCATED_IN", "Country", "name",
+    lien_unique(driver, base, "Circuit", "circuitId", "LOCATED_IN", "Country", "iso3",
                 [{"a": c["k"], "b": c["country"]} for c in d["circuits"] if c["country"]])
-    lien_unique(driver, base, "Driver", "driverId", "HAS_NATIONALITY", "Nationality", "name",
+    lien_unique(driver, base, "Driver", "driverId", "HAS_NATIONALITY", "Nationality", "iso3",
                 [{"a": x["k"], "b": x["nationality"]} for x in d["pilotes"] if x["nationality"]])
-    lien_unique(driver, base, "Constructor", "constructorId", "HAS_NATIONALITY", "Nationality", "name",
+    lien_unique(driver, base, "Constructor", "constructorId", "HAS_NATIONALITY", "Nationality", "iso3",
                 [{"a": x["k"], "b": x["nationality"]} for x in d["constructeurs"] if x["nationality"]])
 
 
@@ -213,6 +212,34 @@ def charger_saison(driver, base: str, d: dict[str, list[dict]]) -> None:
              d["classement_constructeurs"])
 
 
+# --- Relations dérivées ---------------------------------------------------------
+
+# (Driver)-[:TEAMMATE_OF]->(Driver) : deux pilotes d'une même écurie la même saison.
+# Dérivée de DROVE_FOR, reconstruite entièrement à chaque chargement (aucune paire
+# périmée ne survit). Elle rend les recherches de chemins entre pilotes rapides :
+# un plus court chemin sur une relation directe, au lieu d'un motif quantifié
+# pilote-écurie-pilote filtré sur la saison, que Neo4j ne sait pas parcourir
+# dans les deux sens à la fois.
+COEQUIPIERS = """
+    MATCH (a:Driver)-[p:DROVE_FOR]->(k:Constructor)<-[q:DROVE_FOR]-(b:Driver)
+    WHERE p.season = q.season AND a.driverId < b.driverId
+    WITH a, b, collect(DISTINCT p.season) AS saisons, collect(DISTINCT k.name) AS ecuries
+    MERGE (a)-[t:TEAMMATE_OF {key: a.driverId + '|' + b.driverId}]->(b)
+    SET t.seasons = saisons, t.constructors = ecuries,
+        t.firstSeason = reduce(m = 9999, s IN saisons | CASE WHEN s < m THEN s ELSE m END),
+        t.lastSeason = reduce(m = 0, s IN saisons | CASE WHEN s > m THEN s ELSE m END),
+        t.seasonCount = size(saisons)
+    RETURN count(*) AS n"""
+
+
+def deriver(driver, base: str) -> dict:
+    with driver.session(database=base) as session:
+        session.run("MATCH ()-[t:TEAMMATE_OF]->() CALL (t) { DELETE t } IN TRANSACTIONS OF 10000 ROWS").consume()
+        n = session.run(COEQUIPIERS).single()["n"]
+    log.info("  %-42s %8d", "(:Driver)-[:TEAMMATE_OF]->(:Driver)", n)
+    return {"coequipiers": n}
+
+
 # --- Contrôles après chargement ----------------------------------------------
 
 # Chaque requête renvoie le nombre de violations ; 0 est attendu.
@@ -236,6 +263,13 @@ INVARIANTS = {
         " RETURN count(x) AS n",
     "DROVE_FOR dont la saison est absente":
         "MATCH ()-[r:DROVE_FOR]->() WHERE r.season IS NULL RETURN count(r) AS n",
+    "paire de coéquipiers sans TEAMMATE_OF":
+        "MATCH (a:Driver)-[p:DROVE_FOR]->(:Constructor)<-[q:DROVE_FOR]-(b:Driver) "
+        "WHERE p.season = q.season AND a.driverId < b.driverId AND NOT EXISTS { (a)-[:TEAMMATE_OF]->(b) } "
+        "RETURN count(*) AS n",
+    "pays ou nationalité sans code ISO, ou sans ses deux étiquettes":
+        "MATCH (n) WHERE (n:Country OR n:Nationality) "
+        "AND (n.iso3 IS NULL OR NOT (n:Country AND n:Nationality)) RETURN count(n) AS n",
     "RANKED_IN dont la saison ne correspond pas":
         "MATCH ()-[r:RANKED_IN]->(s:Season) WHERE r.season <> s.year RETURN count(r) AS n",
 }
@@ -266,7 +300,7 @@ def controler(session) -> bool:
 LABELS = ("Season", "Circuit", "Country", "Nationality", "Driver", "Constructor", "Status", "Race",
           "RaceResult", "SprintResult", "QualifyingResult", "PitStop", "LapTime")
 RELATIONS = ("LOCATED_IN", "HAS_NATIONALITY", "IN_SEASON", "HELD_AT", "IN_RACE", "OF_DRIVER",
-             "FOR_CONSTRUCTOR", "WITH_STATUS", "DROVE_FOR", "RANKED_IN")
+             "FOR_CONSTRUCTOR", "WITH_STATUS", "DROVE_FOR", "RANKED_IN", "TEAMMATE_OF")
 
 
 def connexion():
@@ -325,6 +359,7 @@ def main() -> int:
                 return 0
             log.info("Chargement :")
             charger(driver, base, donnees)
+            deriver(driver, base)
             with driver.session(database=base) as session:
                 return 0 if controler(session) else 1
 

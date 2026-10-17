@@ -7,58 +7,40 @@ compatible de l'API Ergast.
 **Seul ce que la source permet d'alimenter est modélisé.** Pas d'étiquette ni de
 relation « pour plus tard » : un type vide laisserait croire à une donnée absente.
 
-## Modèle
+## En bref
 
-```mermaid
-graph LR
-  Race -- IN_SEASON --> Season
-  Race -- HELD_AT --> Circuit
-  Circuit -- LOCATED_IN --> Country
-  Driver -- HAS_NATIONALITY --> Nationality
-  Constructor -- HAS_NATIONALITY --> Nationality
-  RaceResult -- IN_RACE --> Race
-  RaceResult -- OF_DRIVER --> Driver
-  RaceResult -- FOR_CONSTRUCTOR --> Constructor
-  RaceResult -- WITH_STATUS --> Status
-  SprintResult -. mêmes liens que RaceResult .-> Race
-  QualifyingResult -. IN_RACE, OF_DRIVER, FOR_CONSTRUCTOR .-> Race
-  PitStop -- IN_RACE / OF_DRIVER --> Race
-  LapTime -- IN_RACE / OF_DRIVER --> Race
-  Driver -- "DROVE_FOR {season}" --> Constructor
-  Driver -- "RANKED_IN {position, points, wins}" --> Season
-  Constructor -- "RANKED_IN {position, points, wins}" --> Season
+```bash
+cp .env.docker.example .env.docker
 ```
 
-| Nœud | Clé | Données | Disponible depuis |
-|---|---|---|---|
-| `Season` | `year` | | 1950 |
-| `Circuit` | `circuitId` | nom, localité, `location` (point WGS-84) | |
-| `Country` | `name` | libellé de l'API (`UK`, `USA`…), non normalisé | |
-| `Nationality` | `name` | gentilé (`British`…) | |
-| `Driver` | `driverId` | nom, trigramme, numéro permanent **actuel**, naissance | |
-| `Constructor` | `constructorId` | nom | |
-| `Status` | `name` | `Finished`, `+1 Lap`, `Engine`… | |
-| `Race` | `raceId` (`AAAA-RR`), unique aussi sur `(season, round)` | date, heure UTC, horaires des séances | 1950 ; horaires selon les saisons |
-| `RaceResult` | `resultId` (`AAAA-RR-numéro-pilote`) | grille, position, points, temps, meilleur tour | 1950 |
-| `SprintResult` | `resultId` | idem, sans vitesse moyenne | 2021 |
-| `QualifyingResult` | `resultId` | Q1, Q2, Q3 (texte et millisecondes) | partiel avant 2003 |
-| `PitStop` | `pitStopId` (`AAAA-RR-pilote-arrêt`) | tour, heure locale, durée | 2011, avec `--arrets` |
-| `LapTime` | `lapTimeId` (`AAAA-RR-pilote-tour`) | position, temps | 1996, avec `--tours` |
+```bash
+sh docker/preparer.sh && docker compose --env-file .env.docker up -d --build
+```
 
-Le **numéro de voiture fait partie de la clé d'un résultat** : dans les années 1950,
-un pilote peut courir deux voitures dans la même course, et deux pilotes partager une
-voiture (même position). Ni `(course, pilote)` ni `(course, position)` ne sont uniques.
+La pile Docker installe Neo4j, charge les 77 saisons (repris si interrompu), planifie les
+deltas par cron, et sert une **interface web** : les seize questions de la rédaction avec
+leurs requêtes, leurs réponses en tableaux, graphiques et graphes interactifs, un
+explorateur de pilotes, le modèle et la santé du chargement. Chaque service a son
+healthcheck ; la base survit à l'arrêt des conteneurs. Exploitation, journaux et
+dépannage : [docs/exploitation-docker.md](docs/exploitation-docker.md).
 
-`DROVE_FOR` et `RANKED_IN` sont issus de la source (résultats, qualifications,
-classements), pas d'une déduction : `RANKED_IN` est le classement **final**
-(`afterRound` indique la manche ; pour la saison en cours, la dernière disputée).
+## Modèle
 
-### Ce qui n'est volontairement pas modélisé
+Description complète : [docs/modele-graphe.md](docs/modele-graphe.md), également
+affichée, avec les volumes réels, par la page « Modèle du graphe » de l'interface.
 
-- Les classements après chaque manche : une requête par manche et par championnat,
-  soit environ 2 200 requêtes de plus (environ 4 h 30 au rythme autorisé).
-- Le lien `Nationality` → `Country` : la source ne le fournit pas, le deviner serait inventer.
-- L'historique des numéros permanents : l'API ne donne que le numéro actuel.
+- **Nœuds** : `Season`, `Circuit`, `Country:Nationality`, `Driver`, `Constructor`,
+  `Status`, `Race`, `RaceResult`, `SprintResult`, `QualifyingResult`, `PitStop`, `LapTime`.
+- **Pays et nationalités** : un seul nœud par code ISO 3166 alpha-3, porteur des deux
+  étiquettes. « France » et « French » sont le même nœud `FRA`, nommé et qualifié en
+  anglais comme en français. Les libellés de l'API sont traduits par
+  [referentiel/pays.csv](referentiel/pays.csv), vérifié contre iso-codes.
+- **Relations** : `IN_SEASON`, `HELD_AT`, `LOCATED_IN`, `HAS_NATIONALITY`, `IN_RACE`,
+  `OF_DRIVER`, `FOR_CONSTRUCTOR`, `WITH_STATUS`, `DROVE_FOR {season}`, `RANKED_IN`, et
+  `TEAMMATE_OF`, dérivée de `DROVE_FOR`, qui rend instantanées les recherches de chemins
+  entre pilotes.
+- **Absent, faute de source** : entraîneurs, directeurs d'équipe, académies, sponsors,
+  dirigeants, fédération (voir la documentation du modèle).
 
 ## Schéma
 
@@ -147,6 +129,27 @@ listés), absente de la base ou du cache. Suivent des contrôles métier : un va
 par course disputée, un champion par saison close, victoires au classement cohérentes
 avec les résultats chargés. Code de sortie 1 au moindre écart.
 
+### Questions de la rédaction : `questions.py`
+
+[requetes/questions.cypher](requetes/questions.cypher) répond, en Cypher, à seize
+questions éditoriales transposées à la F1 (événement = Grand Prix, équipe = écurie,
+coéquipiers = même écurie la même saison). Chacune indique sa couverture :
+**complète**, **partielle** (la part que les données permettent, et ce qui manque)
+ou **non couverte** : la source ne contient ni entraîneurs, ni académies, ni
+sponsors, ni dirigeants, ni fédération, ni rédaction, et aucune relation n'est
+inventée pour y suppléer.
+
+```bash
+.venv/Scripts/python questions.py --liste
+```
+
+```bash
+.venv/Scripts/python questions.py 16 --param a="'alonso'" --param b="'hamilton'"
+```
+
+Les requêtes se collent aussi dans Neo4j Browser, après `:param nom => valeur` pour
+chaque ligne `@param` du bloc.
+
 ### Étape par étape
 
 1. **Extraire** vers le cache local `donnees/brut/` (rien n'est écrit dans Neo4j) :
@@ -177,6 +180,13 @@ avec les résultats chargés. Code de sortie 1 au moindre écart.
 `python transformer.py` valide le cache seul, sans Neo4j.
 
 ## Données et licence
+
+Deux sources, aucune versionnée :
+
+- **Jolpica-F1** (résultats) : CC BY-NC-SA 4.0 ;
+- **iso-codes** du projet Debian (codes ISO 3166 et noms français des pays) :
+  LGPL-2.1-or-later, version épinglée, téléchargée par le pipeline.
+
 
 Les données Jolpica-F1 sont sous licence **CC BY-NC-SA 4.0** : usage non commercial,
 attribution, partage dans les mêmes conditions. Elles ne sont **jamais versionnées**

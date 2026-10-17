@@ -185,11 +185,19 @@ def courses_disputees(saison: int) -> list[int]:
             if dt.date.fromisoformat(c["date"]) <= aujourd_hui]
 
 
-def extraire_par_course(ex: Extracteur, saison: int, point: str, forcer: bool) -> int:
-    """'pitstops' ou 'laps', une course après l'autre. Renvoie le nombre de courses traitées."""
+def extraire_par_course(ex: Extracteur, saison: int, point: str, forcer: bool,
+                        recentes_jours: int | None = None) -> int:
+    """'pitstops' ou 'laps', une course après l'autre. Renvoie le nombre de courses traitées.
+
+    Avec `recentes_jours`, `forcer` ne vaut que pour les courses de cette fenêtre :
+    les données d'une course plus ancienne ne bougent plus, le cache suffit.
+    """
+    aujourd_hui = dt.date.today()
+    dates = {int(c["round"]): dt.date.fromisoformat(c["date"]) for c in courses(lire_pages(f"{saison}/races"))}
     manches = courses_disputees(saison)
     for manche in manches:
-        ex.recuperer(f"{saison}/{manche}/{point}", forcer)
+        recente = recentes_jours is None or (aujourd_hui - dates[manche]).days <= recentes_jours
+        ex.recuperer(f"{saison}/{manche}/{point}", forcer and recente)
     return len(manches)
 
 

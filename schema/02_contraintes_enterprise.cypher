@@ -32,10 +32,12 @@ CREATE CONSTRAINT circuit_lng_type      IF NOT EXISTS FOR (c:Circuit) REQUIRE c.
 CREATE CONSTRAINT circuit_location_type IF NOT EXISTS FOR (c:Circuit) REQUIRE c.location IS :: POINT;
 
 // --- Country / Nationality / Status -----------------------------------------
+CREATE CONSTRAINT country_iso3_exists     IF NOT EXISTS FOR (p:Country)     REQUIRE p.iso3 IS NOT NULL;
+CREATE CONSTRAINT country_iso3_type       IF NOT EXISTS FOR (p:Country)     REQUIRE p.iso3 IS :: STRING;
 CREATE CONSTRAINT country_name_exists     IF NOT EXISTS FOR (p:Country)     REQUIRE p.name IS NOT NULL;
-CREATE CONSTRAINT country_name_type       IF NOT EXISTS FOR (p:Country)     REQUIRE p.name IS :: STRING;
-CREATE CONSTRAINT nationality_name_exists IF NOT EXISTS FOR (n:Nationality) REQUIRE n.name IS NOT NULL;
-CREATE CONSTRAINT nationality_name_type   IF NOT EXISTS FOR (n:Nationality) REQUIRE n.name IS :: STRING;
+CREATE CONSTRAINT country_withdrawn_type  IF NOT EXISTS FOR (p:Country)     REQUIRE p.withdrawn IS :: BOOLEAN;
+CREATE CONSTRAINT nationality_iso3_exists IF NOT EXISTS FOR (n:Nationality) REQUIRE n.iso3 IS NOT NULL;
+CREATE CONSTRAINT nationality_iso3_type   IF NOT EXISTS FOR (n:Nationality) REQUIRE n.iso3 IS :: STRING;
 CREATE CONSTRAINT status_name_exists      IF NOT EXISTS FOR (s:Status)      REQUIRE s.name IS NOT NULL;
 CREATE CONSTRAINT status_name_type        IF NOT EXISTS FOR (s:Status)      REQUIRE s.name IS :: STRING;
 
@@ -125,3 +127,7 @@ CREATE CONSTRAINT ranked_in_points_type   IF NOT EXISTS FOR ()-[r:RANKED_IN]-() 
 CREATE CONSTRAINT ranked_in_position_type IF NOT EXISTS FOR ()-[r:RANKED_IN]-() REQUIRE r.position IS :: INTEGER;
 CREATE CONSTRAINT ranked_in_wins_type     IF NOT EXISTS FOR ()-[r:RANKED_IN]-() REQUIRE r.wins IS :: INTEGER;
 CREATE CONSTRAINT ranked_in_round_type    IF NOT EXISTS FOR ()-[r:RANKED_IN]-() REQUIRE r.afterRound IS :: INTEGER;
+
+CREATE CONSTRAINT teammate_key_exists     IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.key IS NOT NULL;
+CREATE CONSTRAINT teammate_seasons_type   IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.seasons IS :: LIST<INTEGER NOT NULL>;
+CREATE CONSTRAINT teammate_count_type     IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.seasonCount IS :: INTEGER;

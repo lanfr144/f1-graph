@@ -16,6 +16,7 @@ import sys
 from collections import Counter
 
 from commun import CACHE, lire_pages
+from referentiel import ReferentielInvalide, correspondances, iso3
 
 log = logging.getLogger("f1.transformation")
 
@@ -401,7 +402,21 @@ def transformer(saisons: list[int] | None = None) -> dict[str, list[dict]]:
             raise DonneeInvalide(f"résultat {r['k']} : statut absent")
         statuts.add(r["status"])
 
+    # Pays des circuits et nationalités : un même nœud ISO 3166 alpha-3 (« FRA » pour
+    # le pays France comme pour la nationalité « French »).
+    try:
+        for c in circuits.values():
+            c["country"] = iso3("pays", c["country"], f"circuit {c['k']}")
+        for x in list(pilotes.values()) + list(constructeurs.values()):
+            x["nationality"] = iso3("nationalite", x["nationality"], f"{x['k']}")
+        _, noeuds_pays = correspondances()
+    except ReferentielInvalide as e:
+        raise DonneeInvalide(str(e)) from None
+    codes = ({c["country"] for c in circuits.values()}
+             | {x["nationality"] for x in list(pilotes.values()) + list(constructeurs.values())}) - {None}
+
     sortie = {
+        "pays": [{"k": code, "p": noeuds_pays[code]} for code in sorted(codes)],
         "saisons": [{"k": a, "p": {"url": u}} for a, u in sorted(toutes_saisons.items())],
         "circuits": list(circuits.values()),
         "pilotes": list(pilotes.values()),
@@ -417,7 +432,7 @@ def transformer(saisons: list[int] | None = None) -> dict[str, list[dict]]:
         "classement_pilotes": classement_pilotes,
         "classement_constructeurs": classement_constructeurs,
     }
-    for nom in ("saisons", "circuits", "pilotes", "constructeurs", "statuts", "courses",
+    for nom in ("pays", "saisons", "circuits", "pilotes", "constructeurs", "statuts", "courses",
                 "resultats", "sprints", "qualifications", "arrets", "tours"):
         verifier_unicite(sortie[nom], "k", nom)
     for nom in ("pilote_ecurie", "classement_pilotes", "classement_constructeurs"):

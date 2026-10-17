@@ -1,0 +1,39 @@
+# Le contexte de construction ne contient que le code : tout le reste est exclu.
+.git
+.gitignore
+.gitattributes
+.dockerignore
+
+# Dépendances et sorties
+.venv/
+__pycache__/
+*.py[cod]
+
+# Données (licence CC BY-NC-SA 4.0, volumineuses) et volumes Docker
+donnees/
+docker-data/
+
+# Tout fichier d'environnement : secrets
+.env
+.env.*
+
+# Documentation : seule la description du modèle entre dans l'image (page « Modèle »).
+docs/*
+!docs/modele-graphe.md
+SOURCES.md
+README.md
+
+# Rebuts d'éditeurs
+*.wbk
+~$*
+*.tmp
+*.bak
+*.old
+*.orig
+*.rej
+.~lock.*#
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

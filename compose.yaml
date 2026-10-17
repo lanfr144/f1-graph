@@ -1,0 +1,163 @@
+# Graphe F1 : Neo4j, chargeur (chargement initial puis deltas planifiés), interface web.
+#
+#   docker/preparer.sh                                   # contrôles et répertoires
+#   docker compose --env-file .env.docker up -d --build
+#   docker compose --env-file .env.docker logs -f chargeur
+#   docker compose --env-file .env.docker --profile tests run --rm tests
+#
+# Toutes les valeurs viennent de .env.docker (modèle : .env.docker.example). Une
+# variable absente fait échouer `docker compose` immédiatement (${VAR:?}) : aucune
+# valeur par défaut ne masque un oubli. Aucun port n'est écrit ici.
+#
+# Persistance : la base, le cache et les journaux vivent dans des répertoires de
+# l'hôte (bind mounts) ; `docker compose down`, un redémarrage de Docker ou de la
+# machine ne les touchent pas. Seul l'effacement de ces répertoires les perd.
+name: f1-graph
+
+x-journal: &journal
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-application: &application
+  build:
+    context: .
+    dockerfile: docker/app/Dockerfile
+    args:
+      HOTE_UID: "${HOTE_UID:?}"
+      HOTE_GID: "${HOTE_GID:?}"
+  image: f1-graph/app:0.2.0
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  logging: *journal
+
+x-connexion: &connexion
+  # bolt:// direct : neo4j:// demanderait une table de routage annonçant
+  # localhost, injoignable depuis un autre conteneur.
+  NEO4J_URI: "bolt://neo4j:${NEO4J_BOLT_PORT:?}"
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: "${NEO4J_PASSWORD:?}"
+  NEO4J_DATABASE: "${NEO4J_DATABASE:?}"
+  F1_DONNEES: /donnees
+  TZ: "${TZ:?}"
+
+services:
+  neo4j:
+    build:
+      context: .
+      dockerfile: docker/neo4j/Dockerfile
+    image: f1-graph/neo4j:2026.08.1
+    user: "${HOTE_UID:?}:${HOTE_GID:?}"
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?}"
+      NEO4J_server_http_listen__address: ":${NEO4J_HTTP_PORT:?}"
+      NEO4J_server_bolt_listen__address: ":${NEO4J_BOLT_PORT:?}"
+      # Adresses annoncées au navigateur de l'hôte (Neo4j Browser).
+      NEO4J_server_http_advertised__address: "localhost:${NEO4J_HTTP_PORT_HOTE:?}"
+      NEO4J_server_bolt_advertised__address: "localhost:${NEO4J_BOLT_PORT_HOTE:?}"
+      NEO4J_server_memory_heap_initial__size: "${NEO4J_HEAP:?}"
+      NEO4J_server_memory_heap_max__size: "${NEO4J_HEAP:?}"
+      NEO4J_server_memory_pagecache_size: "${NEO4J_PAGECACHE:?}"
+      # date() côté serveur dans le même fuseau que le chargeur.
+      NEO4J_db_temporal_timezone: "${TZ:?}"
+      # Lu par le healthcheck ; préfixe F1_ car l'image convertit les NEO4J_* en réglages.
+      F1_BOLT_PORT: "${NEO4J_BOLT_PORT:?}"
+      TZ: "${TZ:?}"
+    ports:
+      - "${ECOUTE_HOTE:?}:${NEO4J_HTTP_PORT_HOTE:?}:${NEO4J_HTTP_PORT:?}"
+      - "${ECOUTE_HOTE:?}:${NEO4J_BOLT_PORT_HOTE:?}:${NEO4J_BOLT_PORT:?}"
+    volumes:
+      - "${NEO4J_DONNEES_HOTE:?}:/data"
+      - "${NEO4J_JOURNAUX_HOTE:?}:/logs"
+    # Une requête qui renvoie une ligne, et non « le processus existe ».
+    healthcheck:
+      test: ["CMD-SHELL", "/var/lib/neo4j/bin/cypher-shell -a bolt://localhost:$${F1_BOLT_PORT} -u neo4j -p \"$${NEO4J_AUTH#*/}\" --format plain 'RETURN 1 AS ok' | grep -qx 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    init: true
+    restart: unless-stopped
+    # Arrêt propre de la base : la tuer au bout de dix secondes la corromprait.
+    stop_grace_period: 120s
+    mem_limit: "${NEO4J_MEM_LIMIT:?}"
+    security_opt:
+      - no-new-privileges:true
+    logging: *journal
+
+  chargeur:
+    <<: *application
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      <<: *connexion
+      CRON_DELTA: "${CRON_DELTA:?}"
+      PIPELINE_OPTIONS: "${PIPELINE_OPTIONS?}"
+      SANTE_INACTIVITE_MAX_S: "${SANTE_INACTIVITE_MAX_S:?}"
+      SANTE_AGE_MAX_S: "${SANTE_AGE_MAX_S:?}"
+    volumes:
+      - "${F1_DONNEES_HOTE:?}:/donnees"
+    # Ce que le chargeur rend : une exécution qui progresse, ou un delta récent réussi
+    # avec le graphe présent en base (sante.py).
+    healthcheck:
+      test: ["CMD", "python", "/app/sante.py"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    stop_grace_period: 180s
+    mem_limit: "${CHARGEUR_MEM_LIMIT:?}"
+
+  web:
+    <<: *application
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "exec streamlit run /app/app/accueil.py --server.address 0.0.0.0 --server.port $${WEB_PORT}"]
+    environment:
+      <<: *connexion
+      WEB_PORT: "${WEB_PORT:?}"
+    ports:
+      - "${ECOUTE_HOTE:?}:${WEB_PORT_HOTE:?}:${WEB_PORT:?}"
+    # Lecture seule : la page « Santé » lit l'état et les journaux du chargeur.
+    volumes:
+      - "${F1_DONNEES_HOTE:?}:/donnees:ro"
+    # La route de santé de Streamlit, puis la base dont toutes les pages dépendent.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$${WEB_PORT}/_stcore/health && python /app/sante.py --web"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: "${WEB_MEM_LIMIT:?}"
+
+  # Tests d'intégration contre la base chargée : schéma, invariants, rapprochement
+  # cache <-> base, chaque question et chaque page web.
+  #   docker compose --env-file .env.docker --profile tests run --rm tests
+  tests:
+    <<: *application
+    profiles: ["tests"]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "python /app/verifier.py && python -m unittest -v tests.test_unitaires tests.test_app"]
+    environment:
+      <<: *connexion
+    volumes:
+      - "${F1_DONNEES_HOTE:?}:/donnees:ro"
+    # Service ponctuel : il « rend » son code de sortie ; ce healthcheck confirme
+    # seulement, pendant son exécution, que la base qu'il teste répond.
+    healthcheck:
+      test: ["CMD", "python", "/app/sante.py", "--web"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+    restart: "no"
+    mem_limit: "${CHARGEUR_MEM_LIMIT:?}"

@@ -50,6 +50,12 @@ CREATE FULLTEXT INDEX constructor_name_search IF NOT EXISTS
 FOR (k:Constructor) ON EACH [k.name]
 OPTIONS { indexConfig: { `fulltext.analyzer`: 'standard-folding' } };
 
+// Recherche d'un pays par son nom ou par la nationalité, en anglais ou en français
+// (requête R10) : « Français », « French », « France » trouvent tous FRA.
+CREATE FULLTEXT INDEX country_name_search IF NOT EXISTS
+FOR (p:Country) ON EACH [p.name, p.nom, p.nationality, p.nationalite]
+OPTIONS { indexConfig: { `fulltext.analyzer`: 'standard-folding' } };
+
 // Recherche de circuit par nom ou par localité (requête R9).
 CREATE FULLTEXT INDEX circuit_name_search IF NOT EXISTS
 FOR (c:Circuit) ON EACH [c.name, c.locality]

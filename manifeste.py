@@ -103,6 +103,30 @@ def main() -> int:
             sortie.append(f"- Conditions d'utilisation : {c['erreur']}")
         sortie += [f"- {a}" for a in anomalies]
         sortie.append("")
+    import referentiel
+    iso = sorted(referentiel.DOSSIER.glob("*.meta.json")) if referentiel.DOSSIER.is_dir() else []
+    if iso:
+        sortie += [
+            "## Seconde source : codes pays ISO 3166 (iso-codes)", "",
+            "| Champ | Valeur |", "|---|---|",
+            f"| Identifiant | <{referentiel.ISO_DEPOT}>, étiquette `{referentiel.ISO_VERSION}` |",
+            "| Titre | iso-codes — listes ISO 3166-1 et ISO 3166-3, traductions françaises |",
+            "| Éditeur | Projet Debian iso-codes (Tobias Quathamer et contributeurs) |",
+            "| Licence | LGPL-2.1-or-later — <https://spdx.org/licenses/LGPL-2.1-or-later.html> |",
+            "| Attribution | « iso-codes, projet Debian, LGPL-2.1-or-later » |",
+            "| Usage | Vérifier les codes de `referentiel/pays.csv` (produit par le projet) "
+            "et nommer les pays en français ; fichiers non versionnés |", "",
+            "| Fichier | URL | SHA-256 | Récupéré le |", "|---|---|---|---|",
+        ]
+        for meta_f in iso:
+            meta = json.loads(meta_f.read_text(encoding="utf-8"))
+            donnee = meta_f.with_name(meta_f.name.replace(".meta.json", ""))
+            if not donnee.exists():
+                anomalies.append(f"{donnee.name} : fichier absent")
+            elif hashlib.sha256(donnee.read_bytes()).hexdigest() != meta["sha256"]:
+                anomalies.append(f"{donnee.name} : empreinte modifiée depuis le téléchargement")
+            sortie.append(f"| `{donnee.name}` | <{meta['url']}> | `{meta['sha256']}` | {meta['recupere_le']} |")
+        sortie.append("")
     sortie += ["## Fichiers", "",
                "Chemin relatif à `donnees/brut/`. Empreinte : SHA-256 de la réponse brute.", "",
                "| Fichier | URL | SHA-256 | Récupéré le |", "|---|---|---|---|"]

@@ -3,10 +3,14 @@
 # et leur provenance est décrite dans SOURCES.md (généré, lui, versionné).
 donnees/
 
+# Volumes de la pile Docker (base Neo4j, cache, journaux).
+docker-data/
+
 # Secrets : toute variante de fichier d'environnement, sauf le modèle.
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 # Python
 .venv/

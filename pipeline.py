@@ -3,6 +3,7 @@
     python pipeline.py                         # toutes les saisons, données de base
     python pipeline.py --arrets-depuis 2011    # + arrêts au stand à partir de 2011
     python pipeline.py --de 2020 --a 2024      # un intervalle de saisons
+    python pipeline.py --delta                 # saison en cours + saisons absentes de la base
     python pipeline.py --etat                  # où en est-on ? (n'exécute rien)
     python pipeline.py --recommencer           # ignorer le point de reprise
 
@@ -31,6 +32,7 @@ import datetime as dt
 import json
 import logging
 import os
+import signal
 import sys
 import time
 import traceback
@@ -68,6 +70,9 @@ def configurer_journaux(verbeux: bool) -> str:
     racine.addHandler(f)
     racine.addHandler(c)
     logging.getLogger("neo4j").setLevel(logging.WARNING)  # bavard au niveau DEBUG
+    # Notifications du serveur (« l'étiquette Race n'existe pas » sur une base encore vide) :
+    # informatives, elles noieraient les vrais avertissements.
+    logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
     return str(fichier)
 
 
@@ -231,6 +236,8 @@ def main() -> int:
                    help="extraire et charger les arrêts au stand à partir de cette saison (données : 2011)")
     p.add_argument("--tours-depuis", type=int, metavar="ANNEE",
                    help="idem pour les temps au tour (données : 1996 ; ~15 requêtes par course)")
+    p.add_argument("--delta", action="store_true",
+                   help="ne traiter que la saison en cours et les saisons absentes de la base (cron)")
     p.add_argument("--sans-extraction", action="store_true",
                    help="ne rien télécharger : charger le cache tel qu'il est")
     p.add_argument("--sans-chargement", action="store_true", help="extraire seulement, ne pas toucher Neo4j")
@@ -242,6 +249,12 @@ def main() -> int:
 
     if args.etat:
         return afficher_etat()
+
+    # `docker stop` envoie SIGTERM : on le traite comme Ctrl+C, pour que l'interruption
+    # soit enregistrée dans etat.json et que la relance reprenne proprement.
+    def sur_sigterm(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, sur_sigterm)
 
     verrou = Verrou()
     try:
@@ -295,7 +308,7 @@ def executer(args) -> int:
         print("Rien n'a été exécuté ; le point de reprise est inchangé.", file=sys.stderr)
         return 1
     fichier_journal = configurer_journaux(args.verbeux)
-    parametres = {k: getattr(args, k) for k in ("de", "a", "arrets_depuis", "tours_depuis",
+    parametres = {k: getattr(args, k) for k in ("de", "a", "arrets_depuis", "tours_depuis", "delta",
                                                 "sans_extraction", "sans_chargement")}
     etat = Etat()
     if etat.reprenable() and not args.recommencer:
@@ -345,6 +358,30 @@ def executer(args) -> int:
     return 0 if statut == "terminee" else 1
 
 
+# Arrêts et tours d'une course plus ancienne ne changent plus : on ne les redemande pas.
+JOURS_RECENTS = 14
+
+
+def saisons_du_delta(saisons: list[int], saison_en_cours: int, sans_chargement: bool) -> list[int]:
+    """Delta = la saison en cours, plus toute saison connue de l'API mais absente de la base."""
+    chargees: set[int] = set()
+    if not sans_chargement:
+        try:
+            import charger
+            driver, base = charger.connexion()
+            with driver, driver.session(database=base) as s:
+                chargees = {r["s"] for r in s.run("MATCH (r:Race) RETURN DISTINCT r.season AS s")}
+        except Exception as e:  # base injoignable : le delta se réduit à la saison en cours
+            log.warning("Delta : base injoignable (%s) ; seule la saison en cours est traitée.", e)
+            chargees = set(saisons)
+    retenues = [s for s in saisons if s == saison_en_cours or s not in chargees]
+    manquantes = [s for s in retenues if s != saison_en_cours]
+    log.info("Delta : saison en cours %d%s.", saison_en_cours,
+             f" + {len(manquantes)} saison(s) absente(s) de la base : {manquantes}" if manquantes else
+             ", aucune autre saison manquante en base")
+    return retenues
+
+
 def derouler(args, etat: Etat) -> Executeur:
     # Imports différés : --etat et le refus de verrou ne chargent ni le réseau ni Neo4j.
     import extraire
@@ -354,9 +391,13 @@ def derouler(args, etat: Etat) -> Executeur:
 
     # 1. Référentiels : ils donnent aussi la liste des saisons, d'où le plan.
     def referentiels() -> dict:
+        import referentiel
         avant = extracteur.requetes
         saisons = extraire.extraire_referentiels(extracteur)
-        return {"saisons_connues": len(saisons), "requetes": extracteur.requetes - avant}
+        iso = referentiel.assurer()  # ISO 3166 (iso-codes), téléchargé une fois
+        referentiel.correspondances()  # table vérifiée dès maintenant, pas au chargement
+        return {"saisons_connues": len(saisons), "requetes": extracteur.requetes - avant,
+                "iso_telecharges": iso}
 
     ex = Executeur(etat)
     if not args.sans_extraction:
@@ -370,6 +411,8 @@ def derouler(args, etat: Etat) -> Executeur:
     saisons = [s for s in saisons_api if debut <= s <= fin]
     if not saisons:
         raise SystemExit(f"Aucune saison connue entre {debut} et {fin}.")
+    if args.delta:
+        saisons = saisons_du_delta(saisons, saison_en_cours, args.sans_chargement)
 
     # 2. Plan complet, pour numéroter et estimer.
     plan: list[str] = ["extraction:referentiels"] if not args.sans_extraction else []
@@ -385,7 +428,7 @@ def derouler(args, etat: Etat) -> Executeur:
         if not args.sans_chargement:
             plan.append(f"chargement:{s}")
     if not args.sans_chargement:
-        plan.append("controles")
+        plan += ["derivations", "controles"]
     plan.append("manifeste")
 
     ex.total = len(plan)
@@ -437,7 +480,8 @@ def derouler(args, etat: Etat) -> Executeur:
     def par_course(s: int, point: str):
         def f() -> dict:
             avant, refus = extracteur.requetes, extracteur.refus
-            n = extraire.extraire_par_course(extracteur, s, point, forcer=s == saison_en_cours)
+            n = extraire.extraire_par_course(extracteur, s, point, forcer=s == saison_en_cours,
+                                             recentes_jours=JOURS_RECENTS)
             return {"courses": n, "requetes": extracteur.requetes - avant,
                     "refus_api": extracteur.refus - refus}
         return f
@@ -454,6 +498,11 @@ def derouler(args, etat: Etat) -> Executeur:
                     "qualifications": len(d["qualifications"]), "sprints": len(d["sprints"]),
                     "arrets": len(d["arrets"]), "tours": len(d["tours"])}
         return f
+
+    def derivations() -> dict:
+        import charger
+        session().close()
+        return charger.deriver(neo["driver"], neo["base"])
 
     def controles() -> dict:
         import charger
@@ -493,11 +542,16 @@ def derouler(args, etat: Etat) -> Executeur:
                     if args.tours_depuis and s >= args.tours_depuis:
                         requis.append(f"tours:{s}")
                 ex.etape(nom, chargement(s), prerequis=tuple(requis))
-            elif nom == "controles":
-                # Contrôles et manifeste sont refaits dès que cette exécution a changé quelque chose.
+            elif nom == "derivations":
+                # Relations dérivées, contrôles et manifeste : refaits dès que cette
+                # exécution a changé quelque chose.
                 if ex.bilan["faites"]:
                     etat.etapes.pop(nom, None)
-                ex.etape(nom, controles, prerequis=("chargement:referentiels",))
+                ex.etape(nom, derivations, prerequis=("chargement:referentiels",))
+            elif nom == "controles":
+                if ex.bilan["faites"]:
+                    etat.etapes.pop(nom, None)
+                ex.etape(nom, controles, prerequis=("derivations",))
             elif nom == "manifeste":
                 if ex.bilan["faites"]:
                     etat.etapes.pop(nom, None)

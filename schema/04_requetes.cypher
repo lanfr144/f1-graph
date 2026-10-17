@@ -63,6 +63,11 @@ CALL db.index.fulltext.queryNodes('circuit_name_search', 'monaco~')
 YIELD node, score
 RETURN node.name, node.locality, score;
 
+// R10 — country_name_search : « francais » trouve FRA (nom et gentilé, deux langues).
+CALL db.index.fulltext.queryNodes('country_name_search', 'francais')
+YIELD node, score
+RETURN node.iso3, node.name, node.nom, node.nationality, node.nationalite, score;
+
 // --- Requêtes de graphe (sans index dédié : elles partent d'une clé) ---------
 
 // Coéquipiers d'un pilote, saison par saison.

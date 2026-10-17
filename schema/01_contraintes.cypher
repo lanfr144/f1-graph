@@ -22,15 +22,16 @@ FOR (s:Season) REQUIRE s.year IS UNIQUE;
 CREATE CONSTRAINT circuit_id_unique IF NOT EXISTS
 FOR (c:Circuit) REQUIRE c.circuitId IS UNIQUE;
 
-// Pays tel que l'API le nomme ('UK', 'USA', 'Italy'…) : aucune normalisation ISO
-// n'est inventée, faute de table de correspondance publiée par la source.
-CREATE CONSTRAINT country_name_unique IF NOT EXISTS
-FOR (p:Country) REQUIRE p.name IS UNIQUE;
+// Pays ET nationalité : un seul nœud par code ISO 3166 alpha-3, porteur des deux
+// étiquettes :Country:Nationality (« FRA » = la France = la nationalité « French »,
+// « Français »). Codes retirés (ISO 3166-3) admis pour l'histoire : DDR, RHO.
+// Correspondance des libellés de l'API : referentiel/pays.csv, vérifiée contre
+// iso-codes (voir referentiel.py).
+CREATE CONSTRAINT country_iso3_unique IF NOT EXISTS
+FOR (p:Country) REQUIRE p.iso3 IS UNIQUE;
 
-// Nationalité (gentilé : 'British', 'Dutch'…). Distincte de Country : l'API ne
-// fournit aucun lien entre les deux, et le deviner serait inventer.
-CREATE CONSTRAINT nationality_name_unique IF NOT EXISTS
-FOR (n:Nationality) REQUIRE n.name IS UNIQUE;
+CREATE CONSTRAINT nationality_iso3_unique IF NOT EXISTS
+FOR (n:Nationality) REQUIRE n.iso3 IS UNIQUE;
 
 // Pilote. Le trigramme 'code' n'est PAS unique (Michael et Mick Schumacher : MSC),
 // le numéro permanent non plus (réattribué) : seul driverId fait foi.
@@ -89,3 +90,8 @@ FOR ()-[r:DROVE_FOR]-() REQUIRE r.key IS UNIQUE;
 // 'driver:AAAA:<driverId>' ou 'constructor:AAAA:<constructorId>'.
 CREATE CONSTRAINT ranked_in_key_unique IF NOT EXISTS
 FOR ()-[r:RANKED_IN]-() REQUIRE r.key IS UNIQUE;
+
+// (Driver)-[:TEAMMATE_OF]->(Driver), dérivée de DROVE_FOR : '<driverId>|<driverId>'
+// (ordre alphabétique, une seule relation par paire).
+CREATE CONSTRAINT teammate_of_key_unique IF NOT EXISTS
+FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.key IS UNIQUE;
