@@ -1,17 +1,18 @@
-# Graphe F1 : Neo4j, chargeur (chargement initial puis deltas planifiés), interface web.
+# Graphe F1 : Neo4j (Community ou Enterprise), chargeur (chargement initial puis
+# deltas planifiés), interface web, sauvegarde planifiée.
 #
-#   docker/preparer.sh                                   # contrôles et répertoires
-#   docker compose --env-file .env.docker up -d --build
-#   docker compose --env-file .env.docker logs -f chargeur
-#   docker compose --env-file .env.docker --profile tests run --rm tests
+#   sh docker/preparer.sh                    # contrôles et répertoires
+#   docker compose up -d --build
+#   docker compose logs -f chargeur
+#   docker compose --profile tests run --rm tests
 #
-# Toutes les valeurs viennent de .env.docker (modèle : .env.docker.example). Une
-# variable absente fait échouer `docker compose` immédiatement (${VAR:?}) : aucune
+# Toutes les valeurs viennent de .env (modèle : .env.example), lu par docker compose.
+# Une variable absente fait échouer `docker compose` immédiatement (${VAR:?}) : aucune
 # valeur par défaut ne masque un oubli. Aucun port n'est écrit ici.
 #
-# Persistance : la base, le cache et les journaux vivent dans des répertoires de
-# l'hôte (bind mounts) ; `docker compose down`, un redémarrage de Docker ou de la
-# machine ne les touchent pas. Seul l'effacement de ces répertoires les perd.
+# Persistance : la base, le cache, les journaux et les sauvegardes vivent dans des
+# répertoires de l'hôte ; `docker compose down`, un redémarrage de Docker ou de la
+# machine ne les touchent pas.
 name: f1-graph
 
 x-journal: &journal
@@ -27,7 +28,7 @@ x-application: &application
     args:
       HOTE_UID: "${HOTE_UID:?}"
       HOTE_GID: "${HOTE_GID:?}"
-  image: f1-graph/app:0.2.0
+  image: f1-graph/app:0.3.0
   init: true
   security_opt:
     - no-new-privileges:true
@@ -37,7 +38,7 @@ x-connexion: &connexion
   # bolt:// direct : neo4j:// demanderait une table de routage annonçant
   # localhost, injoignable depuis un autre conteneur.
   NEO4J_URI: "bolt://neo4j:${NEO4J_BOLT_PORT:?}"
-  NEO4J_USER: neo4j
+  NEO4J_USER: "${NEO4J_USER:?}"
   NEO4J_PASSWORD: "${NEO4J_PASSWORD:?}"
   NEO4J_DATABASE: "${NEO4J_DATABASE:?}"
   F1_DONNEES: /donnees
@@ -48,10 +49,14 @@ services:
     build:
       context: .
       dockerfile: docker/neo4j/Dockerfile
-    image: f1-graph/neo4j:2026.08.1
+      args:
+        NEO4J_EDITION: "${NEO4J_EDITION:?}"
+    image: "f1-graph/neo4j:2026.08.1-${NEO4J_EDITION:?}"
     user: "${HOTE_UID:?}:${HOTE_GID:?}"
     environment:
-      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?}"
+      NEO4J_AUTH: "${NEO4J_USER:?}/${NEO4J_PASSWORD:?}"
+      # Vide en Community ; en Enterprise, « yes » ou « eval », choisi par l'utilisateur.
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "${NEO4J_ACCEPT_LICENSE_AGREEMENT?}"
       NEO4J_server_http_listen__address: ":${NEO4J_HTTP_PORT:?}"
       NEO4J_server_bolt_listen__address: ":${NEO4J_BOLT_PORT:?}"
       # Adresses annoncées au navigateur de l'hôte (Neo4j Browser).
@@ -62,8 +67,9 @@ services:
       NEO4J_server_memory_pagecache_size: "${NEO4J_PAGECACHE:?}"
       # date() côté serveur dans le même fuseau que le chargeur.
       NEO4J_db_temporal_timezone: "${TZ:?}"
-      # Lu par le healthcheck ; préfixe F1_ car l'image convertit les NEO4J_* en réglages.
+      # Lus par le healthcheck ; préfixe F1_ car l'image convertit les NEO4J_* en réglages.
       F1_BOLT_PORT: "${NEO4J_BOLT_PORT:?}"
+      F1_NEO4J_USER: "${NEO4J_USER:?}"
       TZ: "${TZ:?}"
     ports:
       - "${ECOUTE_HOTE:?}:${NEO4J_HTTP_PORT_HOTE:?}:${NEO4J_HTTP_PORT:?}"
@@ -73,7 +79,7 @@ services:
       - "${NEO4J_JOURNAUX_HOTE:?}:/logs"
     # Une requête qui renvoie une ligne, et non « le processus existe ».
     healthcheck:
-      test: ["CMD-SHELL", "/var/lib/neo4j/bin/cypher-shell -a bolt://localhost:$${F1_BOLT_PORT} -u neo4j -p \"$${NEO4J_AUTH#*/}\" --format plain 'RETURN 1 AS ok' | grep -qx 1"]
+      test: ["CMD-SHELL", "/var/lib/neo4j/bin/cypher-shell -a bolt://localhost:$${F1_BOLT_PORT} -u \"$${F1_NEO4J_USER}\" -p \"$${NEO4J_AUTH#*/}\" --format plain 'RETURN 1 AS ok' | grep -qx 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -137,9 +143,51 @@ services:
     stop_grace_period: 20s
     mem_limit: "${WEB_MEM_LIMIT:?}"
 
+  # Sauvegarde : neo4j-admin database dump selon SAUVEGARDE_CRON, rotation sur
+  # SAUVEGARDE_JOURS jours. En Community, le dump exige d'arrêter Neo4j (environ une
+  # minute) : le service le pilote par le socket Docker, puis le relance TOUJOURS.
+  # Accès au socket = pouvoir sur Docker : ce service n'expose aucun port.
+  sauvegarde:
+    build:
+      context: .
+      dockerfile: docker/sauvegarde/Dockerfile
+    image: f1-graph/sauvegarde:0.1.0
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    user: "${HOTE_UID:?}:${DOCKER_GID:?}"
+    environment:
+      F1_PROJET: f1-graph
+      HOTE_UID: "${HOTE_UID:?}"
+      HOTE_GID: "${HOTE_GID:?}"
+      SAUVEGARDE_CRON: "${SAUVEGARDE_CRON:?}"
+      SAUVEGARDE_JOURS: "${SAUVEGARDE_JOURS:?}"
+      SAUVEGARDE_AGE_MAX_S: "${SAUVEGARDE_AGE_MAX_S:?}"
+      SAUVEGARDE_ATTENTE_MAX_S: "${SAUVEGARDE_ATTENTE_MAX_S:?}"
+      TZ: "${TZ:?}"
+    volumes:
+      - "${SAUVEGARDES_HOTE:?}:/sauvegardes"
+      - "${F1_DONNEES_HOTE:?}:/donnees:ro"
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Ce que le service rend : une sauvegarde de moins de SAUVEGARDE_AGE_MAX_S.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/sante.sh"]
+      interval: 300s
+      timeout: 30s
+      retries: 2
+      start_period: 30s
+    init: true
+    restart: unless-stopped
+    # Un dump en cours doit pouvoir finir, et Neo4j être relancé.
+    stop_grace_period: 300s
+    mem_limit: "${SAUVEGARDE_MEM_LIMIT:?}"
+    security_opt:
+      - no-new-privileges:true
+    logging: *journal
+
   # Tests d'intégration contre la base chargée : schéma, invariants, rapprochement
   # cache <-> base, chaque question et chaque page web.
-  #   docker compose --env-file .env.docker --profile tests run --rm tests
+  #   docker compose --profile tests run --rm tests
   tests:
     <<: *application
     profiles: ["tests"]

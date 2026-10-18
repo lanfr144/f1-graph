@@ -1,2 +1,42 @@
-# Fins de ligne LF dans le dépôt, quel que soit le poste.
+# Fins de ligne : LF partout, dans le dépôt ET dans la copie de travail, quel que
+# soit le poste. Un script shell, un Dockerfile ou un fichier d'environnement en CRLF
+# casse un conteneur Linux (« : not found », variable suivie d'un \r invisible).
+#
+# Après une modification de ce fichier : git add --renormalize .
+
+# Règle générale : texte détecté automatiquement, toujours en LF.
 * text=auto eol=lf
+
+# Texte, explicitement (au cas où la détection hésiterait).
+*.py          text eol=lf diff=python
+*.sh          text eol=lf
+*.cypher      text eol=lf
+*.md          text eol=lf diff=markdown
+*.csv         text eol=lf
+*.json        text eol=lf
+*.toml        text eol=lf
+*.txt         text eol=lf
+*.yaml        text eol=lf
+*.yml         text eol=lf
+Dockerfile    text eol=lf
+.dockerignore text eol=lf
+.gitignore    text eol=lf
+.gitattributes text eol=lf
+.env*         text eol=lf
+
+# Scripts propres à Windows : CRLF, que cmd.exe et PowerShell attendent.
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
+
+# Binaires : jamais convertis, jamais comparés ligne à ligne.
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.pdf         binary
+*.zip         binary
+*.gz          binary
+*.dump        binary
+*.docx        binary
+*.xlsx        binary

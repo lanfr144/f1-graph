@@ -7,7 +7,7 @@
 # Tout est journalisé sur la sortie standard : `docker compose logs -f chargeur`.
 set -eu
 
-: "${CRON_DELTA:?CRON_DELTA manquant (ex. '17 */6 * * *')}"
+: "${CRON_DELTA:?CRON_DELTA manquant (ex. '17 20,23 * * 0;17 7 * * 1', expressions séparées par ;)}"
 : "${PIPELINE_OPTIONS?PIPELINE_OPTIONS manquant (peut être vide)}"
 : "${NEO4J_URI:?NEO4J_URI manquant}"
 
@@ -34,8 +34,15 @@ else
   journal "ATTENTION : chargement initial terminé avec le code ${CODE} ; le prochain delta reprendra les étapes en défaut (voir 'python /app/pipeline.py --etat')"
 fi
 
-printf '%s %s\n' "${CRON_DELTA}" "${COMMANDE}" > /tmp/f1.crontab
-journal "planification des deltas : $(cat /tmp/f1.crontab)"
+# Plusieurs créneaux possibles, séparés par « ; » (dimanche soir ET lundi matin…).
+: > /tmp/f1.crontab
+echo "${CRON_DELTA}" | tr ';' '\n' | while IFS= read -r expression; do
+  expression=$(echo "${expression}" | sed 's/^ *//; s/ *$//')
+  [ -n "${expression}" ] && printf '%s %s\n' "${expression}" "${COMMANDE}" >> /tmp/f1.crontab
+done
+[ -s /tmp/f1.crontab ] || { journal "ÉCHEC : CRON_DELTA ne contient aucune expression"; exit 1; }
+journal "planification des deltas :"
+sed 's/^/    /' /tmp/f1.crontab
 supercronic -no-reap -test /tmp/f1.crontab
 # -no-reap : docker-init (init: true) est le PID 1 et récolte déjà les zombies.
 # -passthrough-logs : le journal du pipeline passe tel quel, sans enveloppe supercronic.

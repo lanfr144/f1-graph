@@ -80,4 +80,4 @@ def graphe(noeuds: dict[str, dict], aretes: list[tuple], hauteur: int = 560) -> 
 
 def erreur_connexion(e: Exception) -> None:
     st.error(f"Neo4j injoignable : {e}")
-    st.info("Vérifier que le service neo4j est sain : docker compose --env-file .env.docker ps")
+    st.info("Vérifier que le service neo4j est sain : docker compose ps")

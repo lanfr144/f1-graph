@@ -10,7 +10,6 @@ docker-data/
 .env
 .env.*
 !.env.example
-!.env.docker.example
 
 # Python
 .venv/

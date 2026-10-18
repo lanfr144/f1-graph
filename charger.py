@@ -4,6 +4,7 @@
     python charger.py                     # schéma + données (idempotent : MERGE)
     python charger.py --saisons 2023 2024 # un sous-ensemble des saisons en cache
     python charger.py --vider             # efface le graphe F1 (lui seul) avant de charger
+    python charger.py --retirer           # retire le graphe F1 d'une base : nœuds, contraintes, index
 
 Connexion lue dans .env (voir .env.example) : NEO4J_URI, NEO4J_USER,
 NEO4J_PASSWORD, NEO4J_DATABASE.
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 
@@ -306,6 +308,11 @@ RELATIONS = ("LOCATED_IN", "HAS_NATIONALITY", "IN_SEASON", "HELD_AT", "IN_RACE",
 def connexion():
     """Pilote Neo4j et nom de base, lus dans .env ; la connexion est vérifiée."""
     lire_env()
+    # Depuis l'hôte, la base de la pile Docker est joignable sur le port publié :
+    # NEO4J_URI peut alors être omise, elle se déduit de NEO4J_BOLT_PORT_HOTE.
+    if not os.environ.get("NEO4J_URI") and os.environ.get("NEO4J_BOLT_PORT_HOTE"):
+        os.environ["NEO4J_URI"] = f"bolt://localhost:{os.environ['NEO4J_BOLT_PORT_HOTE']}"
+        log.debug("NEO4J_URI déduite : %s", os.environ["NEO4J_URI"])
     uri, base = exiger_env("NEO4J_URI"), exiger_env("NEO4J_DATABASE")
     driver = GraphDatabase.driver(uri, auth=(exiger_env("NEO4J_USER"), exiger_env("NEO4J_PASSWORD")))
     try:
@@ -322,21 +329,49 @@ def vider(session) -> None:
     log.info("Effacement du graphe F1 :")
     for label in LABELS:
         n = session.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"]
-        session.run(f"MATCH (n:{label}) CALL {{ WITH n DETACH DELETE n }} "
+        session.run(f"MATCH (n:{label}) CALL (n) {{ DETACH DELETE n }} "
                     "IN TRANSACTIONS OF 10000 ROWS").consume()
         log.info("  (:%s) %d nœud(s) effacé(s)", label, n)
+
+
+def retirer(session) -> None:
+    """Retire entièrement le graphe F1 d'une base qu'il partageait avec d'autres graphes :
+    ses nœuds (et leurs relations), puis ses contraintes et index, reconnus à leur nom
+    dans schema/. Rien d'autre n'est touché."""
+    vider(session)
+    contraintes, index = set(), set()
+    for f in sorted(SCHEMA.glob("0[1-2]_*.cypher")):
+        contraintes |= set(re.findall(r"CREATE CONSTRAINT (\w+)", f.read_text(encoding="utf-8")))
+    index |= set(re.findall(r"CREATE (?:RANGE |POINT |FULLTEXT )INDEX (\w+)",
+                            (SCHEMA / "03_index.cypher").read_text(encoding="utf-8")))
+    presentes = {r["name"] for r in session.run("SHOW CONSTRAINTS YIELD name")}
+    for nom in sorted(contraintes & presentes):
+        session.run(f"DROP CONSTRAINT {nom} IF EXISTS").consume()
+    presents = {r["name"] for r in session.run("SHOW INDEXES YIELD name")}
+    for nom in sorted(index & presents):
+        session.run(f"DROP INDEX {nom} IF EXISTS").consume()
+    log.info("Retrait : %d contrainte(s) et %d index du modèle F1 supprimés",
+             len(contraintes & presentes), len(index & presents))
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--schema", action="store_true", help="appliquer le schéma seulement")
     p.add_argument("--saisons", type=int, nargs="+", help="saisons à charger (défaut : tout le cache)")
+    p.add_argument("--retirer", action="store_true",
+                   help="retirer le graphe F1 de la base (nœuds, contraintes, index) et s'arrêter")
     p.add_argument("--vider", action="store_true",
                    help="effacer les nœuds du modèle F1 (et eux seuls) avant de charger")
     args = p.parse_args()
     journal_console()
 
     with Verrou():
+        if args.retirer:
+            driver, base = connexion()
+            with driver, driver.session(database=base) as session:
+                verifier_version(session)
+                retirer(session)
+            return 0
         donnees = None
         if not args.schema:
             # Transformer AVANT de toucher la base : une donnée invalide n'écrit rien.

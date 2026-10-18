@@ -10,18 +10,21 @@ relation « pour plus tard » : un type vide laisserait croire à une donnée ab
 ## En bref
 
 ```bash
-cp .env.docker.example .env.docker
+cp .env.example .env
 ```
 
 ```bash
-sh docker/preparer.sh && docker compose --env-file .env.docker up -d --build
+sh docker/preparer.sh && docker compose up -d --build
 ```
 
 La pile Docker installe Neo4j, charge les 77 saisons (repris si interrompu), planifie les
-deltas par cron, et sert une **interface web** : les seize questions de la rédaction avec
+deltas par cron (dimanche soir et lundi matin), sauvegarde la base chaque nuit avec une
+rotation sur 7 jours, et sert une **interface web** : les seize questions de la rédaction avec
 leurs requêtes, leurs réponses en tableaux, graphiques et graphes interactifs, un
 explorateur de pilotes, le modèle et la santé du chargement. Chaque service a son
-healthcheck ; la base survit à l'arrêt des conteneurs. Exploitation, journaux et
+healthcheck ; la base survit à l'arrêt des conteneurs. Neo4j en édition Community ou
+Enterprise, au choix (`NEO4J_EDITION`). Ports par défaut : 7475 (Browser), 7688 (Bolt),
+8502 (interface), soit le port standard + 1. Exploitation, journaux et
 dépannage : [docs/exploitation-docker.md](docs/exploitation-docker.md).
 
 ## Modèle
