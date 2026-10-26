@@ -182,6 +182,14 @@ chaque ligne `@param` du bloc.
 
 `python transformer.py` valide le cache seul, sans Neo4j.
 
+## Licences
+
+Le **code** du projet (scripts, schéma, interface, configuration Docker) est publié
+sous **GNU GPL v3** : voir [LICENSE](LICENSE).
+
+Les **données** ne le sont pas : elles ne sont pas dans le dépôt et gardent leurs
+propres licences, ci-dessous.
+
 ## Données et licence
 
 Deux sources, aucune versionnée :
