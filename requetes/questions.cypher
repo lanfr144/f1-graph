@@ -4,40 +4,37 @@
 //
 //  Transposition F1 des questions : événement = Grand Prix, participants et
 //  adversaires = pilotes, équipe = écurie (Constructor), coéquipiers = pilotes
-//  d'une même écurie LA MÊME SAISON (deux DROVE_FOR de même `season`).
+//  d'une même écurie LA MÊME SAISON (relation dérivée TEAMMATE_OF).
 //
-//  Le graphe ne contient que ce que publie l'API Jolpica-F1. Il n'a ni
-//  entraîneur, ni académie, ni centre de formation, ni sponsor, ni dirigeant,
-//  ni fédération, ni rédaction, ni date d'annonce. Chaque question indique sa
-//  couverture :
-//    complète     la requête répond à la question telle que posée ;
-//    partielle    elle répond à la part que les données permettent, et dit
-//                 laquelle manque ;
-//    non couverte aucune requête : la répondre exigerait d'inventer des liens.
+//  Sources : résultats de l'API Jolpica-F1 ; académies de pilotes lues dans
+//  Wikipédia (Academy, MEMBER_OF, FEEDS, voir complements.py) ; pilotes et
+//  écuries suivis par la rédaction (referentiel/suivis.csv, tenu par elle).
+//  Toujours absents, faute de source publique structurée : directeurs d'équipe,
+//  ingénieurs, sponsors, dirigeants, fédération, dates d'annonce.
 //
-//  Paramètres, dans cet ordre :
+//  « Entraîneur » n'existe pas en F1. Deux équivalents sont attestés par les
+//  données, et chaque question dit lequel elle retient :
+//    l'ACADÉMIE de pilotes (programme de formation d'une écurie : Red Bull Junior
+//      Team, Ferrari Driver Academy…), pour la formation, avant et pendant la F1 ;
+//    l'ÉCURIE D'UNE SAISON (mêmes ingénieurs, même direction), pour l'encadrement
+//      en course.
+//
+//  Couverture : complète / partielle (ce qui manque est dit) / non couverte.
+//
+//  Structure de chaque bloc, dans cet ordre :
 //    « @param nom = expression »  valeur fixe par défaut (expression Cypher) ;
+//    « @etape titre | motif | filtres »  explication pas à pas de la requête :
+//                                 ce qu'elle parcourt, et les filtres (WHERE,
+//                                 LIMIT…) appliqués à chaque étape ;
 //    « // --- prérequête »        requête qui CHERCHE dans la base des valeurs pour
-//                                 lesquelles la question a une réponse (dernier
-//                                 Grand Prix disputé, rivaux pour le titre…) ; ses
+//                                 lesquelles la question a une réponse ; ses
 //                                 colonnes deviennent des paramètres ;
 //    « // --- requête »           la requête qui répond à la question.
 //  questions.py enchaîne le tout et affiche chaque requête exécutée ; --param
 //  surcharge n'importe quel paramètre :
 //      python questions.py 16 --param a="'alonso'" --param b="'hamilton'"
-//  Dans Neo4j Browser : exécuter la prérequête, reporter ses valeurs par
-//      :param debut => date('2026-09-13')
-//  puis exécuter la requête.
-//
-//  « Entraîneur » n'existe pas en F1 et la source n'en publie pas l'équivalent
-//  (directeur d'équipe, ingénieur de course, académie de pilotes) ; Wikidata non
-//  plus : une seule des 629 écuries F1 y a un directeur renseigné (vérifié le
-//  17 octobre 2026). L'encadrement réellement partagé que les données attestent
-//  est l'ÉCURIE D'UNE SAISON : mêmes ingénieurs, même direction, même voiture.
-//  C'est ce qui remplace l'entraîneur dans les questions 5 et 10.
 //
 //  Syntaxe : Cypher 5, Neo4j >= 5.23 (CALL (x) { … }, COLLECT { … }).
-//  Chemins entre pilotes : relation dérivée TEAMMATE_OF (voir charger.deriver).
 // -----------------------------------------------------------------------------
 
 
@@ -51,6 +48,12 @@
 // @param semaines = 4
 // @param depart_lointain = 5
 // @param abandons_nombreux = 5
+// @etape Fenêtre de temps | (prérequête) Race | date ≤ aujourd'hui ET au moins un RaceResult ; dernier = max(date) ; début = dernier − $semaines semaines
+// @etape Grands Prix de la fenêtre | (Race)-[:HELD_AT]->(Circuit) | $debut ≤ date ≤ $fin ET course disputée (EXISTS RaceResult)
+// @etape Vainqueur | (Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver) | position = 1
+// @etape Leader avant et après | sous-requête : (Driver)<-[:OF_DRIVER]-(résultat)-[:IN_RACE]->(Race de la même saison) | RaceResult OU SprintResult ; manche ≤ manche courante ; somme des points, tri décroissant, premier
+// @etape Faits marquants | vainqueur, grille, abandons | aucune victoire antérieure du vainqueur ; grille ≥ $depart_lointain ; leader avant ≠ leader après ; non classés ≥ $abandons_nombreux
+// @etape Participants et classement | (Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER, FOR_CONSTRUCTOR, WITH_STATUS] | tri par position ; puis Grands Prix triés par nombre de faits, puis date décroissante
 // --- prérequête : dernier Grand Prix disputé et fenêtre des dernières semaines
 MATCH (r:Race)
 WHERE r.date <= date() AND EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
@@ -61,7 +64,6 @@ MATCH (r:Race)-[:HELD_AT]->(c:Circuit)
 WHERE r.date >= $debut AND r.date <= $fin AND EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
 MATCH (r)<-[:IN_RACE]-(v:RaceResult {position: 1})-[:OF_DRIVER]->(vainqueur:Driver)
 CALL (r) {
-  // Leader du championnat avant et après la course (points de course et de sprint).
   MATCH (d:Driver)<-[:OF_DRIVER]-(x)-[:IN_RACE]->(p:Race {season: r.season})
   WHERE (x:RaceResult OR x:SprintResult) AND p.round <= r.round
   WITH d, sum(x.points) AS apres,
@@ -111,6 +113,11 @@ ORDER BY size(faits_marquants) DESC, r.date DESC;
 // courses disputées par les deux ; devant = mieux classé (abandons compris).
 // @param a = null
 // @param b = null
+// @etape Course de référence | (prérequête) Race | prochaine course : date ≥ aujourd'hui SANS résultat, tri par date, LIMIT 1 ; à défaut la dernière disputée
+// @etape Grille | (Driver)-[:DROVE_FOR]->(Constructor) | DROVE_FOR.season = $saison_grille
+// @etape Paires d'adversaires | grille × grille | a.driverId < b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés
+// @etape Courses communes | (a)<-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]->(Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(b) | date de la course < $date_ref
+// @etape Bilan | comptage par paire | devant = position inférieure ; tri par nombre de courses communes ; LIMIT 25
 // --- prérequête : prochaine course au calendrier ; à défaut (intersaison), la
 // dernière disputée ; et la saison dont la grille est retenue
 OPTIONAL MATCH (p:Race)
@@ -144,6 +151,11 @@ LIMIT 25;
 // Couverture : complète. Pour chaque pilote de la grille retenue : ses anciennes
 // écuries encore engagées contre lui, et ses anciens coéquipiers désormais dans
 // une autre écurie que la sienne.
+// @etape Course de référence | (prérequête) Race | comme Q2 : prochaine course, à défaut la dernière disputée
+// @etape Pilote et écurie actuelle | (Driver)-[:DROVE_FOR]->(Constructor) | DROVE_FOR.season = $saison_grille
+// @etape Anciennes écuries adverses | (Driver)-[:DROVE_FOR]->(Constructor) | saison < $saison_grille ; écurie ≠ actuelle ; écurie engagée cette saison (EXISTS DROVE_FOR $saison_grille)
+// @etape Anciens coéquipiers adverses | (Driver)-[:DROVE_FOR]->(Constructor)<-[:DROVE_FOR]-(Driver) | même saison ; saison < $saison_grille ; coéquipier engagé cette saison ; PAS dans l'écurie actuelle
+// @etape Résultat | une ligne par pilote | au moins une ancienne écurie OU un ancien coéquipier adverse
 // --- prérequête : prochaine course au calendrier ; à défaut (intersaison), la
 // dernière disputée ; et la saison dont la grille est retenue
 OPTIONAL MATCH (p:Race)
@@ -178,11 +190,15 @@ ORDER BY pilote;
 // === Q4 | Who has moved up or down in the rankings since the previous week?
 // Couverture : complète pour la saison en cours. « Semaine précédente » = manche
 // précédente. Le classement est recalculé (points de course et de sprint cumulés) :
-// l'API ne publie que le classement après la dernière
-// manche, rapporté en regard (rang_officiel) pour contrôle. Égalité de points :
-// départage au nombre de meilleures places en Grand Prix (victoires, puis
-// deuxièmes places…), arrivées classées seulement. Avant 1991, les résultats
-// décomptés font diverger ce calcul du classement officiel.
+// l'API ne publie que le classement après la dernière manche, rapporté en regard
+// (rang_officiel) pour contrôle. Égalité de points : départage au nombre de
+// meilleures places en Grand Prix (victoires, puis deuxièmes places…), arrivées
+// classées seulement. Avant 1991, les résultats décomptés font diverger ce calcul.
+// @etape Saison | (prérequête) Race | course disputée ; saisons d'au moins 2 manches ; la plus récente
+// @etape Deux manches comparées | Race de la saison | dernière manche disputée, et la précédente
+// @etape Points cumulés | (Driver)<-[:OF_DRIVER]-(résultat)-[:IN_RACE]->(Race) | RaceResult OU SprintResult ; manche ≤ manche comparée
+// @etape Classement | tri | points décroissants, puis nombre de victoires, de 2es places… (positions classées seulement)
+// @etape Évolution | rang avant − rang après | rang officiel lu dans RANKED_IN si afterRound = dernière manche
 // --- prérequête : dernière saison comptant au moins deux manches disputées
 MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
 WITH r.season AS s, max(r.round) AS manches WHERE manches >= 2
@@ -214,28 +230,51 @@ ORDER BY rang_apres;
 
 
 // === Q5 | Which athletes have had the same coach, and during the same period?
-// Couverture : PARTIELLE, par substitution. Pas d'entraîneur en F1 ni dans la
-// source (voir l'en-tête) : l'encadrement partagé attesté est l'écurie d'une
-// saison. Paires de pilotes de la grille retenue ayant eu la même écurie la même
-// saison, avec la période commune.
-// --- prérequête : dernière saison comptant au moins deux manches disputées
-MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
-WITH r.season AS s, max(r.round) AS manches WHERE manches >= 2
-RETURN max(s) AS saison;
+// Couverture : complète, par substitution. « Même entraîneur » = même ACADÉMIE de
+// pilotes (Wikipédia) ; « même période » = années d'adhésion qui se chevauchent.
+// Une adhésion en cours compte jusqu'à l'année courante. Les coéquipiers (même
+// écurie, même saison) sont l'autre équivalent : relation TEAMMATE_OF, question 16.
+// @etape Adhésions | (Driver)-[:MEMBER_OF]->(Academy)<-[:MEMBER_OF]-(Driver) | a.driverId < b.driverId (chaque paire une fois)
+// @etape Période commune | années de début et de fin | début commun = max(débuts) ; fin commune = min(fins, en cours = année courante) ; début commun ≤ fin commune
+// @etape Résultat | une ligne par paire et académie | tri par durée commune décroissante ; LIMIT 30
 // --- requête
-MATCH (a:Driver)-[t:TEAMMATE_OF]->(b:Driver)
-WHERE EXISTS { (a)-[:DROVE_FOR {season: $saison}]->(:Constructor) }
-  AND EXISTS { (b)-[:DROVE_FOR {season: $saison}]->(:Constructor) }
-RETURN a.fullName AS pilote_a, b.fullName AS pilote_b, t.constructors AS encadrement_commun,
-       t.firstSeason AS de, t.lastSeason AS jusqu_a, t.seasonCount AS saisons
-ORDER BY saisons DESC, de
-LIMIT 25;
+MATCH (a:Driver)-[m1:MEMBER_OF]->(ac:Academy)<-[m2:MEMBER_OF]-(b:Driver)
+WHERE a.driverId < b.driverId
+WITH a, b, ac,
+     CASE WHEN m1.fromYear > m2.fromYear THEN m1.fromYear ELSE m2.fromYear END AS debut,
+     CASE WHEN coalesce(m1.toYear, date().year) < coalesce(m2.toYear, date().year)
+          THEN coalesce(m1.toYear, date().year) ELSE coalesce(m2.toYear, date().year) END AS fin
+WHERE debut <= fin
+RETURN a.fullName AS pilote_a, b.fullName AS pilote_b, ac.name AS academie,
+       debut AS ensemble_de, fin AS ensemble_jusqu_a, fin - debut + 1 AS annees_communes
+ORDER BY annees_communes DESC, ensemble_de
+LIMIT 30;
 
 
 // === Q6 | Which upcoming events involve participants followed by the newsroom?
-// Couverture : NON COUVERTE. Le graphe ne sait pas quels pilotes la rédaction
-// suit. Il faudrait une source de vérité de la rédaction, par exemple une liste
-// de driverId, chargée en (:Journalist)-[:FOLLOWS]->(:Driver).
+// Couverture : complète, dès que la rédaction renseigne referentiel/suivis.csv
+// (pilotes ou écuries qu'elle suit). Sans suivi déclaré, la réponse est vide : rien
+// n'est deviné. Engagés d'une course future = pilotes et écuries de sa saison,
+// l'API ne publiant pas la liste des engagés.
+// @param prochaines = 3
+// @etape Suivis | (prérequête) (Newsroom)-[:FOLLOWS]->(Driver ou Constructor) | comptage : 0 = referentiel/suivis.csv vide
+// @etape Prochaines courses | Race | date ≥ aujourd'hui ET aucun résultat ; tri par date ; LIMIT $prochaines
+// @etape Suivis engagés | (Newsroom)-[:FOLLOWS]->(x) | pilote : DROVE_FOR de la saison de la course ; écurie : au moins un pilote engagé cette saison
+// @etape Résultat | une ligne par course | au moins un suivi engagé ; tri par date
+// --- prérequête : nombre de suivis déclarés par la rédaction
+OPTIONAL MATCH (:Newsroom)-[f:FOLLOWS]->()
+RETURN count(f) AS suivis_declares;
+// --- requête
+MATCH (r:Race)
+WHERE r.date >= date() AND NOT EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
+WITH r ORDER BY r.date LIMIT $prochaines
+MATCH (:Newsroom)-[:FOLLOWS]->(x)
+WHERE (x:Driver AND EXISTS { (x)-[:DROVE_FOR {season: r.season}]->(:Constructor) })
+   OR (x:Constructor AND EXISTS { (x)<-[:DROVE_FOR {season: r.season}]-(:Driver) })
+RETURN r.name AS grand_prix, r.date AS date,
+       [n IN collect(x) WHERE n:Driver | n.fullName] AS pilotes_suivis,
+       [n IN collect(x) WHERE n:Constructor | n.name] AS ecuries_suivies
+ORDER BY date;
 
 
 // === Q7 | Who has performed best against the highest-ranked opponents at the time of the match?
@@ -245,6 +284,11 @@ LIMIT 25;
 // encore de classement). Un pilote doit compter au moins $duels_min duels.
 // @param top = 3
 // @param duels_min = 20
+// @etape Période | (prérequête) Race | les cinq dernières saisons disputées
+// @etape Courses | Race | $de ≤ saison ≤ $a ; manche > 1 ; course disputée
+// @etape Favoris au départ | sous-requête : points cumulés AVANT la course | manches < manche courante ; tri décroissant ; LIMIT $top
+// @etape Duels | (Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver) × favoris | favori ≠ pilote lui-même ; duel gagné = position < position du favori
+// @etape Résultat | par pilote | duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15
 // --- prérequête : les cinq dernières saisons disputées
 MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
 WITH max(r.season) AS s
@@ -277,32 +321,54 @@ LIMIT 15;
 
 
 // === Q9 | What transfers or coaching changes have been announced, and when do they take effect?
-// Couverture : PARTIELLE. Pas de dates d'annonce ni d'encadrement dans la source :
-// seuls les changements d'écurie EFFECTIFS sont connus, datés par la première
-// course disputée avec la nouvelle écurie (changements en cours de saison compris).
+// Couverture : PARTIELLE. Pas de dates d'annonce dans les sources : seuls les
+// changements EFFECTIFS sont connus. Transferts : nouvelle écurie, datée par la
+// première course disputée avec elle. Changements d'encadrement : entrées dans une
+// académie l'année $saison et sorties à la fin de l'année précédente (Wikipédia,
+// à l'année près).
+// @etape Saison | (prérequête) Race | dernière saison disputée
+// @etape Transferts | (Driver)-[:DROVE_FOR]->(Constructor) | DROVE_FOR.season = $saison ET pas de DROVE_FOR vers cette écurie en $saison − 1
+// @etape Date d'effet du transfert | (Driver)<-[:OF_DRIVER]-(résultat)-[:FOR_CONSTRUCTOR]->(nouvelle écurie) | course de $saison ; tri par date ; LIMIT 1
+// @etape Entrées en académie | (Driver)-[:MEMBER_OF]->(Academy) | fromYear = $saison
+// @etape Sorties d'académie | (Driver)-[:MEMBER_OF]->(Academy) | toYear = $saison − 1
+// @etape Résultat | UNION ALL des trois listes | tri par date d'effet
 // --- prérequête : dernière saison disputée
 MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
 RETURN max(r.season) AS saison;
 // --- requête
-MATCH (d:Driver)-[n:DROVE_FOR {season: $saison}]->(nouvelle:Constructor)
+MATCH (d:Driver)-[:DROVE_FOR {season: $saison}]->(nouvelle:Constructor)
 WHERE NOT EXISTS { (d)-[:DROVE_FOR {season: $saison - 1}]->(nouvelle) }
 WITH d, nouvelle,
-     COLLECT { MATCH (d)-[:DROVE_FOR {season: $saison - 1}]->(k:Constructor) RETURN k.name } AS ecuries_saison_precedente,
+     COLLECT { MATCH (d)-[:DROVE_FOR {season: $saison - 1}]->(k:Constructor) RETURN k.name } AS avant,
      COLLECT {
        MATCH (d)<-[:OF_DRIVER]-(x)-[:FOR_CONSTRUCTOR]->(nouvelle), (x)-[:IN_RACE]->(r:Race {season: $saison})
        WHERE x:RaceResult OR x:QualifyingResult OR x:SprintResult
        RETURN r ORDER BY r.date LIMIT 1
      } AS premiere
-RETURN d.fullName AS pilote, ecuries_saison_precedente AS depuis, nouvelle.name AS vers,
-       premiere[0].name AS effectif_au_grand_prix, premiere[0].date AS effectif_le,
-       CASE WHEN size(ecuries_saison_precedente) = 0 THEN 'absent la saison précédente' END AS remarque
-ORDER BY effectif_le, pilote;
+RETURN 'transfert' AS changement, d.fullName AS pilote,
+       CASE WHEN size(avant) = 0 THEN 'absent en ' + toString($saison - 1)
+            ELSE reduce(t = '', n IN avant | t + CASE WHEN t = '' THEN '' ELSE ', ' END + n) END AS depuis,
+       nouvelle.name AS vers, toString(premiere[0].date) + ' (' + premiere[0].name + ')' AS effectif
+UNION ALL
+MATCH (d:Driver)-[m:MEMBER_OF]->(ac:Academy)
+WHERE m.fromYear = $saison
+RETURN 'entrée en académie' AS changement, d.fullName AS pilote, '—' AS depuis, ac.name AS vers,
+       toString($saison) AS effectif
+UNION ALL
+MATCH (d:Driver)-[m:MEMBER_OF]->(ac:Academy)
+WHERE m.toYear = $saison - 1
+RETURN 'sortie d''académie' AS changement, d.fullName AS pilote, ac.name AS depuis, '—' AS vers,
+        'fin ' + toString($saison - 1) AS effectif;
 
 
 // === Q10 | If a coach is removed from the network, which players or groups become disconnected?
-// Couverture : PARTIELLE, par analogie. Sans entraîneur, l'équivalent mesurable est
-// l'écurie : la retirer coupe les pilotes qui n'ont couru que pour elle du reste du
-// réseau des coéquipiers, et défait les binômes qu'elle seule réunissait.
+// Couverture : PARTIELLE, par analogie. L'encadrement retenu est l'ÉCURIE : la
+// retirer coupe du réseau des coéquipiers les pilotes qui n'ont couru que pour
+// elle, et défait les binômes qu'elle seule réunissait. Les académies ne relient pas
+// les pilotes entre eux dans ce réseau : les retirer n'isolerait personne.
+// @etape Écurie retirée | (prérequête) (Driver)-[:DROVE_FOR]->(Constructor) | pilotes n'ayant couru que pour UNE écurie ; l'écurie qui en compte le plus
+// @etape Pilotes isolés | (Driver)-[:DROVE_FOR]->(écurie) | AUCUN DROVE_FOR vers une autre écurie
+// @etape Binômes défaits | (a)-[:DROVE_FOR]->(écurie)<-[:DROVE_FOR]-(b) | même saison ; a.driverId < b.driverId ; jamais coéquipiers dans une autre écurie
 // --- prérequête : l'écurie dont le retrait isole le plus de pilotes
 MATCH (d:Driver)-[:DROVE_FOR]->(k:Constructor)
 WITH d, collect(DISTINCT k) AS ecuries WHERE size(ecuries) = 1
@@ -328,22 +394,28 @@ RETURN k.name AS ecurie,
 
 
 // === Q11 | Which players are indirectly connected through their career paths, without having attended the same academy or shared a coach?
-// Couverture : PARTIELLE. Ni académie ni entraîneur dans la source : la condition
-// d'exclusion ne peut pas être vérifiée. Restent les pilotes reliés par un
-// coéquipier commun sans avoir jamais été coéquipiers eux-mêmes, avec les
-// intermédiaires, par la relation dérivée TEAMMATE_OF.
+// Couverture : complète, par substitution. Reliés indirectement = un coéquipier
+// commun (TEAMMATE_OF à deux pas). Exclus : les pilotes déjà coéquipiers (même
+// encadrement d'écurie) et ceux passés par une même académie, à n'importe quelle
+// époque.
+// @etape Pilote de départ | (prérequête) (Driver)-[:DROVE_FOR]->(Constructor) | grille de la dernière saison ; le plus de coéquipiers distincts
+// @etape Deux pas de coéquipiers | (a)-[:TEAMMATE_OF]-(m)-[:TEAMMATE_OF]-(b) | b ≠ a
+// @etape Pas d'encadrement commun | NOT EXISTS (a)-[:TEAMMATE_OF]-(b) | jamais coéquipiers
+// @etape Pas d'académie commune | NOT EXISTS (a)-[:MEMBER_OF]->(Academy)<-[:MEMBER_OF]-(b) | aucune académie en commun
+// @etape Résultat | par pilote relié | intermédiaires collectés ; tri par nombre d'intermédiaires ; LIMIT 25
 // --- prérequête : le pilote de la dernière grille au réseau de coéquipiers le plus riche
 MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
 WITH max(r.season) AS s
 MATCH (d:Driver)-[:DROVE_FOR {season: s}]->(:Constructor)
 WITH DISTINCT d
-WITH d, size(COLLECT { MATCH (d)-[p:DROVE_FOR]->(:Constructor)<-[q:DROVE_FOR]-(t:Driver)
-                       WHERE p.season = q.season AND t <> d RETURN DISTINCT t }) AS coequipiers
+WITH d, COUNT { (d)-[:TEAMMATE_OF]-(:Driver) } AS coequipiers
 ORDER BY coequipiers DESC LIMIT 1
 RETURN d.driverId AS pilote;
 // --- requête
 MATCH (a:Driver {driverId: $pilote})-[:TEAMMATE_OF]-(m:Driver)-[:TEAMMATE_OF]-(b:Driver)
-WHERE b <> a AND NOT EXISTS { (a)-[:TEAMMATE_OF]-(b) }
+WHERE b <> a
+  AND NOT EXISTS { (a)-[:TEAMMATE_OF]-(b) }
+  AND NOT EXISTS { (a)-[:MEMBER_OF]->(:Academy)<-[:MEMBER_OF]-(b) }
 WITH b, collect(DISTINCT m.fullName) AS par_l_intermediaire_de
 RETURN b.fullName AS pilote_relie, size(par_l_intermediaire_de) AS intermediaires, par_l_intermediaire_de
 ORDER BY intermediaires DESC, pilote_relie
@@ -351,34 +423,78 @@ LIMIT 25;
 
 
 // === Q12 | Which coaches connect players from different academies?
-// Couverture : NON COUVERTE. Même en remplaçant l'entraîneur par l'écurie, il
-// faudrait les académies de pilotes : absentes de la source, et quasi vides dans
-// Wikidata (deux membres recensés pour la Red Bull Junior Team, le 17 octobre 2026).
+// Couverture : complète, par substitution. « Entraîneur » = encadrement de course :
+// l'ÉCURIE D'UNE SAISON. Elle relie des académies quand elle fait courir, la même
+// saison, des pilotes formés dans des académies différentes (adhésion commencée
+// avant ou pendant cette saison).
+// @etape Pilotes engagés | (Driver)-[:DROVE_FOR]->(Constructor) | toutes saisons
+// @etape Formation | (Driver)-[:MEMBER_OF]->(Academy) | année d'entrée ≤ saison de l'engagement
+// @etape Écurie-saison | regroupement par écurie et saison | au moins 2 académies DIFFÉRENTES
+// @etape Résultat | une ligne par écurie-saison | tri par nombre d'académies, puis saison décroissante ; LIMIT 25
+// --- requête
+MATCH (d:Driver)-[f:DROVE_FOR]->(k:Constructor)
+MATCH (d)-[m:MEMBER_OF]->(ac:Academy)
+WHERE m.fromYear <= f.season
+WITH k, f.season AS saison, collect(DISTINCT ac.name) AS academies,
+     collect(DISTINCT d.fullName + ' (' + ac.name + ')') AS pilotes
+WHERE size(academies) >= 2
+RETURN k.name AS encadrement, saison, size(academies) AS nb_academies, academies, pilotes
+ORDER BY nb_academies DESC, saison DESC
+LIMIT 25;
 
 
 // === Q13 | Which teams are connected by multiple independent paths, such as a coach, sponsor, executive, or former teammate?
-// Couverture : PARTIELLE. Seul un type de chemin existe dans les données : le
-// pilote passé par les deux écuries. Pas de sponsors, dirigeants ni entraîneurs.
-// Chemins indépendants = pilotes distincts.
+// Couverture : PARTIELLE. Deux types de chemins existent dans les données : le
+// PILOTE passé par les deux écuries, et l'ACADÉMIE qui alimente l'une et a formé
+// un pilote de l'autre. Pas de sponsors ni de dirigeants dans les sources.
+// Chemins indépendants = intermédiaires distincts ; types = nature des chemins.
 // @param chemins_min = 4
-MATCH (k1:Constructor)<-[:DROVE_FOR]-(d:Driver)-[:DROVE_FOR]->(k2:Constructor)
-WHERE k1.constructorId < k2.constructorId
-WITH k1, k2, collect(DISTINCT d.fullName) AS pilotes
-WHERE size(pilotes) >= $chemins_min
-RETURN k1.name AS ecurie_1, k2.name AS ecurie_2, size(pilotes) AS chemins_independants, pilotes
-ORDER BY chemins_independants DESC
+// @etape Chemins par pilote | (k1)<-[:DROVE_FOR]-(Driver)-[:DROVE_FOR]->(k2) | k1 < k2 (chaque paire une fois)
+// @etape Chemins par académie | (k1)<-[:FEEDS]-(Academy)<-[:MEMBER_OF]-(Driver)-[:DROVE_FOR]->(k2) | k1 ≠ k2 ; paire remise en ordre k1 < k2
+// @etape Regroupement | par paire d'écuries | intermédiaires distincts par type
+// @etape Résultat | une ligne par paire | total ≥ $chemins_min ; tri par nombre de types, puis total ; LIMIT 20
+// --- requête
+CALL () {
+  MATCH (k1:Constructor)<-[:DROVE_FOR]-(d:Driver)-[:DROVE_FOR]->(k2:Constructor)
+  WHERE k1.constructorId < k2.constructorId
+  RETURN k1, k2, 'pilote' AS type, d.fullName AS intermediaire
+  UNION
+  MATCH (ka:Constructor)<-[:FEEDS]-(ac:Academy)<-[:MEMBER_OF]-(d:Driver)-[:DROVE_FOR]->(kb:Constructor)
+  WHERE ka <> kb
+  RETURN CASE WHEN ka.constructorId < kb.constructorId THEN ka ELSE kb END AS k1,
+         CASE WHEN ka.constructorId < kb.constructorId THEN kb ELSE ka END AS k2,
+         'académie' AS type, ac.name AS intermediaire
+}
+WITH k1, k2, type, collect(DISTINCT intermediaire) AS intermediaires
+WITH k1, k2, collect({type: type, n: size(intermediaires), via: intermediaires}) AS chemins,
+     sum(size(intermediaires)) AS total
+WHERE total >= $chemins_min
+RETURN k1.name AS ecurie_1, k2.name AS ecurie_2, size(chemins) AS types_de_chemins, total AS chemins_independants,
+       [c IN chemins | c.type + ' : ' + toString(c.n)] AS detail,
+       reduce(v = [], c IN chemins | v + c.via) AS intermediaires
+ORDER BY types_de_chemins DESC, chemins_independants DESC
 LIMIT 20;
 
 
 // === Q14 | What documented links connect federation decision-makers, the executives of the teams involved, and their sponsors, either directly or through no more than three intermediaries?
-// Couverture : NON COUVERTE. Ni fédération, ni dirigeants, ni sponsors dans la source.
+// Couverture : NON COUVERTE. Ni décideurs de la fédération (président de la FIA,
+// directeur de course, commissaires), ni dirigeants d'écurie, ni sponsors dans des
+// sources publiques structurées. Pistes : documents officiels de la FIA (décisions
+// des commissaires, nominatifs), article Wikipédia « Formula One sponsorship
+// liveries » (sponsors par écurie et par saison, tableaux hétérogènes).
 
 
 // === Q15 | Do the champions of the past ten years belong to shared training and coaching networks, even if they never directly shared an organization?
-// Couverture : PARTIELLE. Pas de réseaux de formation ni d'encadrement : la
-// requête mesure leur proximité dans le réseau des coéquipiers (plus courte chaîne),
-// et dit s'ils ont partagé une écurie, même à des saisons différentes.
+// Couverture : complète, par substitution. Réseau de formation = académies
+// (MEMBER_OF) ; réseau d'encadrement = coéquipiers (TEAMMATE_OF). Pour chaque paire
+// de champions : académies de chacun, académie commune, organisation commune
+// (écurie ou académie), et plus courte chaîne dans le réseau mêlant les deux.
 // @param saisons = 10
+// @etape Champions | (Driver)-[:RANKED_IN]->(Season) | position = 1 ; année < année courante ; année ≥ année courante − $saisons
+// @etape Paires | champions × champions | a.driverId < b.driverId
+// @etape Académies | (Driver)-[:MEMBER_OF]->(Academy) | pour chacun des deux
+// @etape Organisation commune | EXISTS écurie commune OU académie commune | à n'importe quelle époque
+// @etape Réseau commun | shortestPath((a)-[:TEAMMATE_OF|MEMBER_OF*..10]-(b)) | chemin non orienté, au plus 10 relations, passant par des pilotes ou des académies
 // --- requête
 MATCH (c:Driver)-[k:RANKED_IN]->(s:Season)
 WHERE k.position = 1 AND s.year < date().year AND s.year >= date().year - $saisons
@@ -386,18 +502,28 @@ WITH collect(DISTINCT c) AS champions
 UNWIND champions AS a
 UNWIND champions AS b
 WITH a, b WHERE a.driverId < b.driverId
-OPTIONAL MATCH ch = shortestPath((a)-[:TEAMMATE_OF*..10]-(b))
+OPTIONAL MATCH ch = shortestPath((a)-[:TEAMMATE_OF|MEMBER_OF*..10]-(b))
 RETURN a.fullName AS champion_a, b.fullName AS champion_b,
-       EXISTS { (a)-[:DROVE_FOR]->(:Constructor)<-[:DROVE_FOR]-(b) } AS meme_ecurie_un_jour,
-       length(ch) - 1 AS intermediaires,
-       [n IN nodes(ch) | n.fullName] AS chaine_de_coequipiers
-ORDER BY intermediaires, champion_a;
+       COLLECT { MATCH (a)-[:MEMBER_OF]->(x:Academy) RETURN DISTINCT x.name } AS academies_a,
+       COLLECT { MATCH (b)-[:MEMBER_OF]->(x:Academy) RETURN DISTINCT x.name } AS academies_b,
+       EXISTS { (a)-[:DROVE_FOR]->(:Constructor)<-[:DROVE_FOR]-(b) }
+         OR EXISTS { (a)-[:MEMBER_OF]->(:Academy)<-[:MEMBER_OF]-(b) } AS organisation_commune,
+       length(ch) AS longueur_chaine,
+       [n IN nodes(ch) | coalesce(n.fullName, n.name)] AS chaine
+ORDER BY longueur_chaine, champion_a;
 
 
 // === Q16 | Do the two opponents have a shared history, such as a team, coach, training center, or mutual teammates? What indirect connections link them?
-// Couverture : PARTIELLE. Écuries communes, saisons comme coéquipiers, coéquipiers
-// communs, et plus courte chaîne de coéquipiers. Pas d'entraîneurs ni de centres
-// de formation dans la source.
+// Couverture : complète, par substitution. Écuries communes, saisons comme
+// coéquipiers (encadrement partagé), académies communes (centre de formation),
+// coéquipiers communs, et plus courte chaîne dans le réseau des coéquipiers et des
+// académies.
+// @etape Rivaux | (prérequête) (Driver)-[:RANKED_IN]->(Season) | dernière saison classée ; positions 1 et 2
+// @etape Coéquipiers | (a)-[:TEAMMATE_OF]-(b) | saisons partagées
+// @etape Écuries communes | (a)-[:DROVE_FOR]->(Constructor)<-[:DROVE_FOR]-(b) | à n'importe quelle saison
+// @etape Académies communes | (a)-[:MEMBER_OF]->(Academy)<-[:MEMBER_OF]-(b) | avec les années de chacun
+// @etape Coéquipiers communs | (a)-[:TEAMMATE_OF]-(Driver)-[:TEAMMATE_OF]-(b) | intermédiaire distinct des deux
+// @etape Chaîne indirecte | shortestPath((a)-[:TEAMMATE_OF|MEMBER_OF*..10]-(b)) | non orientée, au plus 10 relations
 // --- prérequête : les deux premiers du dernier classement des pilotes (rivaux pour le titre)
 MATCH (:Driver)-[:RANKED_IN]->(s:Season)
 WITH max(s.year) AS annee
@@ -408,11 +534,14 @@ WITH collect(d.driverId) AS duo
 RETURN duo[0] AS a, duo[1] AS b;
 // --- requête
 MATCH (a:Driver {driverId: $a}), (b:Driver {driverId: $b})
-OPTIONAL MATCH ch = shortestPath((a)-[:TEAMMATE_OF*..10]-(b))
+OPTIONAL MATCH ch = shortestPath((a)-[:TEAMMATE_OF|MEMBER_OF*..10]-(b))
 RETURN a.fullName AS pilote_a, b.fullName AS pilote_b,
        COLLECT { MATCH (a)-[t:TEAMMATE_OF]-(b) UNWIND t.seasons AS saison RETURN saison } AS coequipiers_en,
        COLLECT { MATCH (a)-[:DROVE_FOR]->(k:Constructor)<-[:DROVE_FOR]-(b) RETURN DISTINCT k.name } AS ecuries_communes,
+       COLLECT {
+         MATCH (a)-[ma:MEMBER_OF]->(ac:Academy)<-[mb:MEMBER_OF]-(b)
+         RETURN ac.name + ' (' + toString(ma.fromYear) + '–' + coalesce(toString(ma.toYear), '') + ' / '
+                + toString(mb.fromYear) + '–' + coalesce(toString(mb.toYear), '') + ')'
+       } AS academies_communes,
        COLLECT { MATCH (a)-[:TEAMMATE_OF]-(t:Driver)-[:TEAMMATE_OF]-(b) RETURN DISTINCT t.fullName } AS coequipiers_communs,
-       [n IN nodes(ch) | n.fullName] AS chaine_de_coequipiers;
-
-
+       [n IN nodes(ch) | coalesce(n.fullName, n.name)] AS chaine;

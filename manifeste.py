@@ -127,6 +127,30 @@ def main() -> int:
                 anomalies.append(f"{donnee.name} : empreinte modifiée depuis le téléchargement")
             sortie.append(f"| `{donnee.name}` | <{meta['url']}> | `{meta['sha256']}` | {meta['recupere_le']} |")
         sortie.append("")
+    import complements
+    wiki = sorted(complements.DOSSIER.glob("*.json.meta.json")) if complements.DOSSIER.is_dir() else []
+    if wiki:
+        sortie += [
+            "## Troisième source : académies de pilotes (Wikipédia)", "",
+            "| Champ | Valeur |", "|---|---|",
+            "| Identifiant | <https://en.wikipedia.org/>, une révision précise par page (ci-dessous) |",
+            "| Titre | Articles des programmes de jeunes pilotes listés dans `referentiel/academies.csv` |",
+            "| Éditeur | Contributeurs de Wikipédia (Wikimedia Foundation) |",
+            "| Licence | CC BY-SA 4.0 — <https://creativecommons.org/licenses/by-sa/4.0/> |",
+            "| Attribution | « Contributeurs de Wikipédia, <titre de l'article>, révision <n°>, CC BY-SA 4.0 » |",
+            "| Usage | Adhésions de pilotes de F1 aux académies (relation MEMBER_OF) ; fichiers non versionnés |",
+            "",
+            "| Article | Révision (URL) | SHA-256 | Récupéré le |", "|---|---|---|---|",
+        ]
+        for meta_f in wiki:
+            meta = json.loads(meta_f.read_text(encoding="utf-8"))
+            donnee = meta_f.with_name(meta_f.name.replace(".meta.json", ""))
+            if not donnee.exists():
+                anomalies.append(f"{donnee.name} : fichier absent")
+            elif hashlib.sha256(donnee.read_bytes()).hexdigest() != meta["sha256"]:
+                anomalies.append(f"{donnee.name} : empreinte modifiée depuis le téléchargement")
+            sortie.append(f"| {meta['titre']} | <{meta['url']}> | `{meta['sha256']}` | {meta['recupere_le']} |")
+        sortie.append("")
     sortie += ["## Fichiers", "",
                "Chemin relatif à `donnees/brut/`. Empreinte : SHA-256 de la réponse brute.", "",
                "| Fichier | URL | SHA-256 | Récupéré le |", "|---|---|---|---|"]

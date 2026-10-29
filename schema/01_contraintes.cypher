@@ -95,3 +95,17 @@ FOR ()-[r:RANKED_IN]-() REQUIRE r.key IS UNIQUE;
 // (ordre alphabétique, une seule relation par paire).
 CREATE CONSTRAINT teammate_of_key_unique IF NOT EXISTS
 FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.key IS UNIQUE;
+
+// --- Données complémentaires (complements.py) --------------------------------
+
+// Académie de pilotes (programme de jeunes pilotes d'une écurie), source Wikipédia.
+CREATE CONSTRAINT academy_id_unique IF NOT EXISTS
+FOR (a:Academy) REQUIRE a.academyId IS UNIQUE;
+
+// (Driver)-[:MEMBER_OF]->(Academy), une par période : '<academyId>:<driverId>:<année de début>'.
+CREATE CONSTRAINT member_of_key_unique IF NOT EXISTS
+FOR ()-[r:MEMBER_OF]-() REQUIRE r.key IS UNIQUE;
+
+// La rédaction, qui suit des pilotes et des écuries (referentiel/suivis.csv).
+CREATE CONSTRAINT newsroom_name_unique IF NOT EXISTS
+FOR (n:Newsroom) REQUIRE n.name IS UNIQUE;

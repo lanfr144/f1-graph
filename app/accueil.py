@@ -14,5 +14,7 @@ pages = st.navigation([
 # Attribution exigée par les licences des données affichées.
 st.sidebar.caption("Données : [Jolpica-F1](https://github.com/jolpica/jolpica-f1), licence "
                    "[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) — usage non "
-                   "commercial. Codes et noms de pays : iso-codes (Debian), LGPL-2.1-or-later.")
+                   "commercial. Codes et noms de pays : iso-codes (Debian), LGPL-2.1-or-later. "
+                   "Académies de pilotes : contributeurs de [Wikipédia](https://en.wikipedia.org/), "
+                   "licence [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).")
 pages.run()

@@ -17,7 +17,7 @@ COULEURS = {
     "Driver": "#378ADD", "Constructor": "#D85A30", "Race": "#7F77DD", "Season": "#888780",
     "Circuit": "#1D9E75", "Country": "#BA7517", "Status": "#B4B2A9",
     "RaceResult": "#AFA9EC", "SprintResult": "#CECBF6", "QualifyingResult": "#9FE1CB",
-    "PitStop": "#F0997B", "LapTime": "#F5C4B3",
+    "PitStop": "#F0997B", "LapTime": "#F5C4B3", "Academy": "#7F77DD", "Newsroom": "#D4537E",
 }
 
 

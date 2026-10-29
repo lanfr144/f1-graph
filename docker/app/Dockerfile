@@ -57,7 +57,7 @@ RUN for outil in ss netstat ip ifconfig ping dig nslookup curl traceroute superc
  && python -c "import neo4j, streamlit, pyvis" \
       || { echo "construction : module Python manquant (neo4j, streamlit ou pyvis)" >&2; exit 1; } \
  && python -m compileall -q /app \
- && python -c "import commun, extraire, transformer, charger, pipeline, manifeste, verifier, questions, sante, referentiel" \
+ && python -c "import commun, extraire, transformer, charger, pipeline, manifeste, verifier, questions, sante, referentiel, complements" \
       || { echo "construction : un module du projet ne s'importe pas" >&2; exit 1; } \
  && python -m unittest -q tests.test_unitaires \
       || { echo "construction : tests unitaires en échec" >&2; exit 1; } \

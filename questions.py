@@ -31,7 +31,7 @@ def lire_questions() -> dict[int, dict]:
     for bloc in re.split(r"^// === Q", texte, flags=re.M)[1:]:
         entete, _, reste = bloc.partition("\n")
         numero, _, titre = entete.partition("|")
-        params, notes, sections = {}, [], []
+        params, notes, sections, etapes = {}, [], [], []
         courante = None  # None : commentaires d'en-tête du bloc
         for ligne in reste.splitlines():
             m = re.match(r"// --- (prérequête|requête)\b\s*:?\s*(.*)", ligne)
@@ -40,8 +40,13 @@ def lire_questions() -> dict[int, dict]:
                 sections.append(courante)
             elif courante is None:
                 p = re.match(r"// @param (\w+) = (.+)", ligne)
+                e = re.match(r"// @etape (.+)", ligne)
                 if p:
                     params[p[1]] = p[2].strip()
+                elif e:
+                    # « titre | motif parcouru | filtres appliqués »
+                    champs = [c.strip() for c in e[1].split(" | ")] + ["", ""]
+                    etapes.append({"titre": champs[0], "motif": champs[1], "filtres": champs[2]})
                 elif ligne.startswith("//"):
                     notes.append(ligne[2:].strip())
                 elif ligne.strip():
@@ -55,7 +60,7 @@ def lire_questions() -> dict[int, dict]:
         for sec in sections:
             sec["cypher"] = "\n".join(sec.pop("lignes")).strip().rstrip(";").strip()
         questions[int(numero)] = {
-            "titre": titre.strip(), "notes": notes, "params": params,
+            "titre": titre.strip(), "notes": notes, "params": params, "etapes": etapes,
             "prerequetes": [s for s in sections if s["genre"] == "prérequête" and s["cypher"]],
             "requete": next((s["cypher"] for s in sections if s["genre"] == "requête" and s["cypher"]), ""),
         }
@@ -94,6 +99,66 @@ def montrer_cypher(cypher: str) -> None:
     print(textwrap.indent(cypher, "      │ "))
 
 
+# --- Explications : les étapes « @etape » rendues en texte, Graphviz et Mermaid --------
+
+def explication_texte(q: dict) -> str:
+    return "\n".join(f"  {i}. {e['titre']} — parcourt {e['motif']}\n       filtres : {e['filtres'] or 'aucun'}"
+                     for i, e in enumerate(q["etapes"], 1))
+
+
+def explication_dot(q: dict) -> str:
+    """Schéma Graphviz : une boîte par étape (titre, motif parcouru, filtres)."""
+    def echapper(t: str) -> str:
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    lignes = ['digraph etapes {', '  rankdir=TB; nodesep=0.3; ranksep=0.35;',
+              '  node [shape=plain, fontname="Helvetica", fontsize=11];', '  edge [color="#888780"];']
+    for i, e in enumerate(q["etapes"], 1):
+        filtres = "<BR/>".join(echapper(f.strip()) for f in e["filtres"].split(" ; ") if f.strip()) or "aucun filtre"
+        lignes.append(
+            f'  e{i} [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" COLOR="#378ADD">'
+            f'<TR><TD ALIGN="LEFT" BGCOLOR="#E6F1FB"><B>{i}. {echapper(e["titre"])}</B></TD></TR>'
+            f'<TR><TD ALIGN="LEFT"><FONT FACE="Courier" POINT-SIZE="10">{echapper(e["motif"])}</FONT></TD></TR>'
+            f'<TR><TD ALIGN="LEFT"><FONT COLOR="#993C1D">{filtres}</FONT></TD></TR></TABLE>>];')
+        if i > 1:
+            lignes.append(f"  e{i - 1} -> e{i};")
+    lignes.append("}")
+    return "\n".join(lignes)
+
+
+def explication_mermaid(q: dict) -> str:
+    def echapper(t: str) -> str:
+        return t.replace('"', "#quot;").replace("<", "#lt;").replace(">", "#gt;").replace("|", "#124;")
+
+    lignes = ["flowchart TD"]
+    for i, e in enumerate(q["etapes"], 1):
+        lignes.append(f'  E{i}["<b>{i}. {echapper(e["titre"])}</b><br/>{echapper(e["motif"])}'
+                      f'<br/><i>{echapper(e["filtres"] or "aucun filtre")}</i>"]')
+        if i > 1:
+            lignes.append(f"  E{i - 1} --> E{i}")
+    return "\n".join(lignes)
+
+
+def generer_doc(questions: dict) -> str:
+    """docs/explication-requetes.md : pour chaque question, ses étapes et leurs filtres."""
+    sortie = ["# Explication des requêtes", "",
+              "> Généré par `python questions.py --doc` à partir des lignes `@etape` de",
+              "> `requetes/questions.cypher` — ne pas modifier à la main.", "",
+              "Chaque question est décomposée en étapes : ce que l'étape **parcourt** dans le graphe,",
+              "puis les **filtres** appliqués (`WHERE`, `LIMIT`, comparaisons). L'interface web",
+              "(page « Questions ») montre en plus le **plan d'exécution** réel de Neo4j.", ""]
+    for n in sorted(questions):
+        q = questions[n]
+        sortie += [f"## Q{n} — {q['titre']}", "", " ".join(q["notes"]), ""]
+        if not q["etapes"]:
+            continue
+        sortie += ["| Étape | Parcourt | Filtres |", "|---|---|---|"]
+        sortie += [f"| {i}. {e['titre']} | `{e['motif'].replace('|', '¦')}` | {e['filtres'].replace('|', '¦') or '—'} |"
+                   for i, e in enumerate(q["etapes"], 1)]
+        sortie += ["", "```mermaid", explication_mermaid(q), "```", ""]
+    return "\n".join(sortie) + "\n"
+
+
 def afficher(lignes: list[dict], maximum: int) -> None:
     if not lignes:
         print("    → aucune ligne")
@@ -112,19 +177,29 @@ def main() -> int:
     p.add_argument("--lignes", type=int, default=10, help="lignes affichées par question (défaut 10)")
     p.add_argument("--liste", action="store_true", help="lister les questions sans les exécuter")
     p.add_argument("--sans-cypher", action="store_true", help="ne pas afficher le texte des requêtes")
+    p.add_argument("--explications", action="store_true",
+                   help="afficher les étapes et filtres de chaque question, sans exécuter")
+    p.add_argument("--doc", action="store_true", help="écrire docs/explication-requetes.md et s'arrêter")
     args = p.parse_args()
 
     questions = lire_questions()
+    if args.doc:
+        cible = RACINE / "docs" / "explication-requetes.md"
+        cible.write_text(generer_doc(questions), encoding="utf-8", newline="\n")
+        print(f"{cible} écrit ({sum(len(q['etapes']) for q in questions.values())} étapes)")
+        return 0
     choisies = args.numeros or sorted(questions)
     inconnues = [n for n in choisies if n not in questions]
     if inconnues:
         raise SystemExit(f"Question(s) inconnue(s) : {inconnues} ; disponibles : {sorted(questions)}")
     surcharges = dict(s.split("=", 1) for s in args.param)
 
-    if args.liste:
+    if args.liste or args.explications:
         for n in choisies:
             q = questions[n]
             print(f"Q{n:<2} {q['notes'][0] if q['notes'] else ''}\n    {q['titre']}")
+            if args.explications and q["etapes"]:
+                print(explication_texte(q))
         return 0
 
     import charger

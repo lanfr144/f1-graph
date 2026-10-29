@@ -242,6 +242,47 @@ def deriver(driver, base: str) -> dict:
     return {"coequipiers": n}
 
 
+# --- Données complémentaires (complements.py) -----------------------------------
+
+def charger_complements(driver, base: str, c: dict) -> dict:
+    """Académies (Wikipédia) et suivis de la rédaction.
+
+    Ces données ne sont pas datées par saison comme les résultats : elles sont
+    remplacées en bloc à chaque chargement (une adhésion retirée de la source
+    disparaît du graphe), sans toucher au reste du graphe.
+    """
+    executer(driver, base, "UNWIND $lignes AS l MERGE (a:Academy {academyId: l.k}) SET a += l.p "
+             "RETURN count(*) AS n", c["academies"], "(:Academy)")
+    executer(driver, base, """
+        UNWIND $lignes AS l
+        MATCH (a:Academy {academyId: l.a})
+        MATCH (k:Constructor {constructorId: l.b})
+        MERGE (a)-[:FEEDS]->(k)
+        RETURN count(*) AS n""",
+             [{"a": a["k"], "b": k} for a in c["academies"] for k in a["constructeurs"]],
+             "(:Academy)-[:FEEDS]->(:Constructor)")
+    cles = [x["key"] for x in c["adhesions"]]
+    with driver.session(database=base) as s:
+        s.run("MATCH ()-[m:MEMBER_OF]->() WHERE NOT m.key IN $cles DELETE m", cles=cles).consume()
+    lien_cle(driver, base, "Driver", "driverId", "MEMBER_OF", "Academy", "academyId", c["adhesions"])
+
+    with driver.session(database=base) as s:
+        s.run("MERGE (r:Newsroom {name: 'rédaction'})").consume()
+        s.run("MATCH (:Newsroom)-[f:FOLLOWS]->() DELETE f").consume()
+    for nature, label, cle in (("driver", "Driver", "driverId"), ("constructor", "Constructor", "constructorId")):
+        lignes = [x for x in c["suivis"] if x["nature"] == nature]
+        if lignes:
+            executer(driver, base, f"""
+                UNWIND $lignes AS l
+                MATCH (r:Newsroom {{name: 'rédaction'}})
+                MATCH (x:{label} {{{cle}: l.k}})
+                MERGE (r)-[f:FOLLOWS]->(x) SET f += l.p
+                RETURN count(*) AS n""", lignes, f"(:Newsroom)-[:FOLLOWS]->(:{label})")
+    if not c["suivis"]:
+        log.info("  (:Newsroom)-[:FOLLOWS] : referentiel/suivis.csv ne liste aucun suivi")
+    return {"academies": len(c["academies"]), "adhesions": len(c["adhesions"]), "suivis": len(c["suivis"])}
+
+
 # --- Contrôles après chargement ----------------------------------------------
 
 # Chaque requête renvoie le nombre de violations ; 0 est attendu.
@@ -274,6 +315,11 @@ INVARIANTS = {
         "AND (n.iso3 IS NULL OR NOT (n:Country AND n:Nationality)) RETURN count(n) AS n",
     "RANKED_IN dont la saison ne correspond pas":
         "MATCH ()-[r:RANKED_IN]->(s:Season) WHERE r.season <> s.year RETURN count(r) AS n",
+    "adhésion à une académie sans année de début, ou finissant avant de commencer":
+        "MATCH ()-[m:MEMBER_OF]->() WHERE m.fromYear IS NULL "
+        "OR (m.toYear IS NOT NULL AND m.toYear < m.fromYear) RETURN count(m) AS n",
+    "académie qui n'alimente aucune écurie":
+        "MATCH (a:Academy) WHERE NOT EXISTS { (a)-[:FEEDS]->(:Constructor) } RETURN count(a) AS n",
 }
 
 
@@ -300,9 +346,10 @@ def controler(session) -> bool:
 
 
 LABELS = ("Season", "Circuit", "Country", "Nationality", "Driver", "Constructor", "Status", "Race",
-          "RaceResult", "SprintResult", "QualifyingResult", "PitStop", "LapTime")
+          "RaceResult", "SprintResult", "QualifyingResult", "PitStop", "LapTime", "Academy", "Newsroom")
 RELATIONS = ("LOCATED_IN", "HAS_NATIONALITY", "IN_SEASON", "HELD_AT", "IN_RACE", "OF_DRIVER",
-             "FOR_CONSTRUCTOR", "WITH_STATUS", "DROVE_FOR", "RANKED_IN", "TEAMMATE_OF")
+             "FOR_CONSTRUCTOR", "WITH_STATUS", "DROVE_FOR", "RANKED_IN", "TEAMMATE_OF",
+             "MEMBER_OF", "FEEDS", "FOLLOWS")
 
 
 def connexion():

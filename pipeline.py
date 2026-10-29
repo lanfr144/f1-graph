@@ -428,7 +428,7 @@ def derouler(args, etat: Etat) -> Executeur:
         if not args.sans_chargement:
             plan.append(f"chargement:{s}")
     if not args.sans_chargement:
-        plan += ["derivations", "controles"]
+        plan += ["complements", "derivations", "controles"]
     plan.append("manifeste")
 
     ex.total = len(plan)
@@ -504,6 +504,21 @@ def derouler(args, etat: Etat) -> Executeur:
         session().close()
         return charger.deriver(neo["driver"], neo["base"])
 
+    def complements() -> dict:
+        """Académies (Wikipédia, relues si le cache a plus de 7 jours) et suivis de la rédaction."""
+        import charger
+        import complements as comp
+        d = tr.transformer([])
+        try:
+            c = {**comp.academies(d["pilotes"], d["constructeurs"], telecharger=not args.sans_extraction),
+                 "suivis": comp.suivis(d["pilotes"], d["constructeurs"])}
+        except comp.ComplementInvalide as e:
+            raise RuntimeError(str(e)) from None
+        session().close()
+        detail = charger.charger_complements(neo["driver"], neo["base"], c)
+        detail["juniors_hors_f1"] = sum(s["hors_f1"] for s in c["stats"].values())
+        return detail
+
     def controles() -> dict:
         import charger
         with session() as s:
@@ -542,6 +557,12 @@ def derouler(args, etat: Etat) -> Executeur:
                     if args.tours_depuis and s >= args.tours_depuis:
                         requis.append(f"tours:{s}")
                 ex.etape(nom, chargement(s), prerequis=tuple(requis))
+            elif nom == "complements":
+                # Données complémentaires : refaites à chaque exécution qui a changé
+                # quelque chose (une adhésion dépend des pilotes connus).
+                if ex.bilan["faites"]:
+                    etat.etapes.pop(nom, None)
+                ex.etape(nom, complements, prerequis=("chargement:referentiels",))
             elif nom == "derivations":
                 # Relations dérivées, contrôles et manifeste : refaits dès que cette
                 # exécution a changé quelque chose.

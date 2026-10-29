@@ -131,3 +131,14 @@ CREATE CONSTRAINT ranked_in_round_type    IF NOT EXISTS FOR ()-[r:RANKED_IN]-() 
 CREATE CONSTRAINT teammate_key_exists     IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.key IS NOT NULL;
 CREATE CONSTRAINT teammate_seasons_type   IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.seasons IS :: LIST<INTEGER NOT NULL>;
 CREATE CONSTRAINT teammate_count_type     IF NOT EXISTS FOR ()-[r:TEAMMATE_OF]-() REQUIRE r.seasonCount IS :: INTEGER;
+
+// --- Données complémentaires -------------------------------------------------
+CREATE CONSTRAINT academy_id_exists       IF NOT EXISTS FOR (a:Academy) REQUIRE a.academyId IS NOT NULL;
+CREATE CONSTRAINT academy_name_exists     IF NOT EXISTS FOR (a:Academy) REQUIRE a.name IS NOT NULL;
+CREATE CONSTRAINT academy_revision_type   IF NOT EXISTS FOR (a:Academy) REQUIRE a.revision IS :: INTEGER;
+CREATE CONSTRAINT member_of_key_exists    IF NOT EXISTS FOR ()-[r:MEMBER_OF]-() REQUIRE r.key IS NOT NULL;
+CREATE CONSTRAINT member_of_from_exists   IF NOT EXISTS FOR ()-[r:MEMBER_OF]-() REQUIRE r.fromYear IS NOT NULL;
+CREATE CONSTRAINT member_of_from_type     IF NOT EXISTS FOR ()-[r:MEMBER_OF]-() REQUIRE r.fromYear IS :: INTEGER;
+CREATE CONSTRAINT member_of_to_type       IF NOT EXISTS FOR ()-[r:MEMBER_OF]-() REQUIRE r.toYear IS :: INTEGER;
+CREATE CONSTRAINT member_of_ongoing_type  IF NOT EXISTS FOR ()-[r:MEMBER_OF]-() REQUIRE r.ongoing IS :: BOOLEAN;
+CREATE CONSTRAINT newsroom_name_exists    IF NOT EXISTS FOR (n:Newsroom) REQUIRE n.name IS NOT NULL;

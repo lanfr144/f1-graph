@@ -22,6 +22,8 @@ SCHEMA = [
     ("LapTime", "IN_RACE", "Race"), ("LapTime", "OF_DRIVER", "Driver"),
     ("Driver", "DROVE_FOR", "Constructor"), ("Driver", "RANKED_IN", "Season"),
     ("Constructor", "RANKED_IN", "Season"), ("Driver", "TEAMMATE_OF", "Driver"),
+    ("Driver", "MEMBER_OF", "Academy"), ("Academy", "FEEDS", "Constructor"),
+    ("Newsroom", "FOLLOWS", "Driver"), ("Newsroom", "FOLLOWS", "Constructor"),
 ]
 
 try:

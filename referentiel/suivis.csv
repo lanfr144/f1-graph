@@ -1,0 +1,4 @@
+type;identifiant;remarque
+driver;max_verstappen;Max Verstappen (NLD)
+driver;hadjar;Isack Hadjar (FRA)
+constructor;red_bull;Red Bull (moteur Red Bull Ford depuis 2026 ; même écurie dans l'API)

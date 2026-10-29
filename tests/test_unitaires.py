@@ -11,9 +11,77 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
+import complements  # noqa: E402
 import questions  # noqa: E402
 import transformer as tr  # noqa: E402
 from charger import instructions  # noqa: E402
+
+
+class LectureWikipedia(unittest.TestCase):
+    """Cas rencontrés dans les pages des académies (révisions d'octobre 2026)."""
+
+    TABLEAU = """
+== Graduates to Formula One ==
+{| class="wikitable"
+! Driver
+! Academy experience
+! F1 experience with other teams
+! Years
+|-
+| {{flagicon|MON}} [[Charles Leclerc]]<ref name="x">source</ref>
+|align=center| 2016–2018
+| ''[[Sauber]] ({{F1|2018}})''
+| {{F1|2019}}–
+|-
+| {{sortname|Oliver|Bearman}}
+| 2022–
+| {{N/A}}
+| {{F1|2024}}
+|}
+== Esports ==
+{| class="wikitable"
+! Driver !! Years
+|-
+| Bardia Broumand || 2023–
+|}
+"""
+
+    def test_periodes(self):
+        self.assertEqual(complements.periodes("2010–2013"), [(2010, 2013)])
+        self.assertEqual(complements.periodes("2023–"), [(2023, None)])
+        self.assertEqual(complements.periodes("2015–16, 2019"), [(2015, 2016), (2019, 2019)])
+        self.assertEqual(complements.periodes("2004&ndash;2005"), [(2004, 2005)])
+        self.assertEqual(complements.periodes("None"), [])
+
+    def test_tableaux_et_liens(self):
+        t = complements.tableaux(self.TABLEAU)
+        self.assertEqual(len(t), 2)
+        self.assertEqual(t[0]["section"], "Graduates to Formula One")
+        self.assertEqual(t[0]["entetes"], ["Driver", "Academy experience", "F1 experience with other teams", "Years"])
+        self.assertEqual(complements.premier_lien(t[0]["lignes"][0][0]), "Charles Leclerc")
+        self.assertEqual(t[0]["lignes"][0][1], "2016–2018")  # attribut « align=center| » retiré
+        self.assertEqual(complements.premier_lien(t[0]["lignes"][1][0]), "Oliver Bearman")  # {{sortname}}
+
+    def test_titre_de_url(self):
+        self.assertEqual(complements.titre_de_url("http://en.wikipedia.org/wiki/Nico_H%C3%BClkenberg"),
+                         "Nico Hülkenberg")
+        self.assertIsNone(complements.titre_de_url(None))
+
+    def test_table_des_academies(self):
+        with (RACINE / "referentiel" / "academies.csv").open(encoding="utf-8") as f:
+            lignes = list(csv.DictReader(f, delimiter=";"))
+        self.assertEqual(len({l["academyId"] for l in lignes}), len(lignes))
+        for l in lignes:
+            self.assertRegex(l["academyId"], r"^[a-z_]+$")
+            self.assertTrue(l["page_wikipedia"] and l["ecuries"], l)
+
+    def test_chaque_question_couverte_est_expliquee(self):
+        for n, q in questions.lire_questions().items():
+            with self.subTest(question=n):
+                if q["requete"]:
+                    self.assertTrue(q["etapes"], "requête sans étapes @etape d'explication")
+                    for e in q["etapes"]:
+                        self.assertTrue(e["titre"] and e["motif"], e)
 
 
 class Conversions(unittest.TestCase):

@@ -69,9 +69,58 @@ with st.expander("Requête exécutée", expanded=True):
     st.code(r["cypher"], language="cypher")
     st.caption(sans_dollar("Paramètres : " + ", ".join(f"${k} = {v}" for k, v in r["params"].items())))
 
+
+def plan_dot(plan: dict) -> str:
+    """Plan d'exécution de Neo4j (EXPLAIN) en Graphviz : un nœud par opérateur, avec ses
+    détails (motif parcouru, prédicat de filtre, index utilisé…), de la lecture au résultat."""
+    def echapper(t: str) -> str:
+        return t.replace("\\", "\\\\").replace('"', '\\"')
+
+    lignes, compteur = ['digraph plan {', '  rankdir=BT; node [shape=box, style="rounded,filled", '
+                        'fontname="Helvetica", fontsize=10];', '  edge [color="#888780"];'], [0]
+
+    def visiter(op: dict) -> str:
+        compteur[0] += 1
+        ident = f"o{compteur[0]}"
+        nom = op.get("operatorType", "?").split("@")[0]
+        details = str(op.get("args", op.get("arguments", {})).get("Details", ""))
+        details = details if len(details) <= 160 else details[:157] + "…"
+        filtre = nom in ("Filter", "NodeIndexSeek", "NodeUniqueIndexSeek", "DirectedRelationshipIndexSeek",
+                         "NodeByLabelScan", "Limit", "Top", "Sort", "Expand(All)", "Expand(Into)")
+        couleur = "#FAEEDA" if nom == "Filter" else "#E6F1FB" if "Index" in nom else "#F1EFE8"
+        etiquette = f"{nom}\\n{echapper(details)}" if details else nom
+        lignes.append(f'  {ident} [label="{etiquette}", fillcolor="{couleur}"' + (', penwidth=2' if filtre else '') + '];')
+        for enfant in op.get("children", []):
+            lignes.append(f"  {visiter(enfant)} -> {ident};")
+        return ident
+
+    visiter(plan)
+    lignes.append("}")
+    return "\n".join(lignes)
+
+
+with st.expander("Comprendre la requête : étapes et filtres", expanded=False):
+    if q["etapes"]:
+        st.markdown("Chaque boîte est une étape : ce qu'elle **parcourt** dans le graphe (en "
+                    "police fixe), puis les **filtres** appliqués (en rouge).")
+        st.graphviz_chart(qmod.explication_dot(q), use_container_width=True)
+    try:
+        with session() as s:
+            plan = s.run("EXPLAIN " + r["cypher"], r["params"]).consume().plan
+        st.markdown("**Plan d'exécution de Neo4j** (`EXPLAIN`) : ce que le moteur fait réellement, "
+                    "de bas en haut. En orange, les opérateurs `Filter` et leur prédicat ; en bleu, "
+                    "les lectures par index.")
+        st.graphviz_chart(plan_dot(plan), use_container_width=True)
+    except Exception as e:  # le plan est une aide, pas une condition de la réponse
+        st.caption(f"Plan d'exécution indisponible : {e}")
+
 df = tableau(r["lignes"], r["colonnes"])
 if df.empty:
-    st.warning("Aucune ligne : la base ne contient pas de réponse pour ces paramètres.")
+    if choix == 6:
+        st.warning("Aucune course à venir n'implique un pilote ou une écurie suivis : la rédaction "
+                   "déclare ses suivis dans referentiel/suivis.csv (type ; identifiant ; remarque).")
+    else:
+        st.warning("Aucune ligne : la base ne contient pas de réponse pour ces paramètres.")
     st.stop()
 
 
@@ -131,10 +180,25 @@ elif choix == 4:
 elif choix == 5:
     d = df.copy()
     d["paire"] = d["pilote_a"] + " / " + d["pilote_b"]
-    st.altair_chart(alt.Chart(d).mark_bar(color="#7F77DD").encode(
-        x=alt.X("de:Q", title="saisons", scale=alt.Scale(zero=False)), x2="jusqu_a:Q",
-        y=alt.Y("paire:N", sort=None, title=None),
-        tooltip=["paire", "encadrement_commun", "de", "jusqu_a", "saisons"]), use_container_width=True)
+    st.caption("Années pendant lesquelles les deux pilotes appartenaient en même temps à la même académie.")
+    st.altair_chart(alt.Chart(d).mark_bar().encode(
+        x=alt.X("ensemble_de:Q", title="années", scale=alt.Scale(zero=False)), x2="ensemble_jusqu_a:Q",
+        y=alt.Y("paire:N", sort=None, title=None), color=alt.Color("academie:N", title="académie"),
+        tooltip=["paire", "academie", "ensemble_de", "ensemble_jusqu_a", "annees_communes"]),
+        use_container_width=True)
+elif choix == 6:
+    st.dataframe(df, hide_index=True, use_container_width=True)
+elif choix == 12:
+    noeuds, aretes = {}, []
+    for _, l in df.iterrows():
+        ident = f"e:{l['encadrement']} {l['saison']}"
+        noeuds[ident] = noeud(f"{l['encadrement']} {l['saison']}", "Constructor", forme="square", taille=22)
+        for a in l["academies"]:
+            noeuds["a:" + a] = noeud(a, "Academy", couleur="#7F77DD", forme="diamond", taille=26)
+            aretes.append((ident, "a:" + a, {"couleur": "#7F77DD"}))
+    st.caption("En violet, les académies ; en orange, l'écurie d'une saison qui fait courir des pilotes "
+               "issus de plusieurs académies, et les relie ainsi.")
+    graphe(noeuds, aretes, hauteur=620)
 elif choix == 7:
     barres(df, "pct_gagnes:Q", "pilote:N", "% de duels gagnés contre les mieux classés")
 elif choix == 9:
@@ -165,17 +229,23 @@ elif choix == 11:
 elif choix == 13:
     d = df.copy()
     d["paire"] = d["ecurie_1"] + " / " + d["ecurie_2"]
-    barres(d, "chemins_independants:Q", "paire:N", "pilotes passés par les deux écuries", "#D85A30")
+    barres(d, "chemins_independants:Q", "paire:N", "chemins indépendants (pilotes et académies)", "#D85A30")
 elif choix in (15, 16):
+    with session() as s:
+        academies = {x["n"] for x in s.run("MATCH (a:Academy) RETURN a.name AS n")}
     noeuds, aretes = {}, []
     for _, l in df.iterrows():
-        chaine = l["chaine_de_coequipiers"] or []
+        chaine = l["chaine"] or []
         for i, p in enumerate(chaine):
             extremite = i in (0, len(chaine) - 1)
-            noeuds.setdefault(p, noeud(p, "Driver", taille=28 if extremite else 16,
-                                       couleur="#BA7517" if extremite else COULEURS["Driver"]))
+            est_academie = p in academies
+            if est_academie:
+                noeuds.setdefault(p, noeud(p, "Academy", couleur="#7F77DD", forme="diamond", taille=22))
+            else:
+                noeuds.setdefault(p, noeud(p, "Driver", taille=28 if extremite else 16,
+                                           couleur="#BA7517" if extremite else COULEURS["Driver"]))
             if i:
-                aretes.append((chaine[i - 1], p, {"titre": "coéquipiers"}))
+                aretes.append((chaine[i - 1], p, {"titre": "académie" if est_academie else "coéquipiers"}))
         if choix == 16:
             for k in l["ecuries_communes"]:
                 noeuds["k:" + k] = noeud(k, "Constructor", forme="square")
@@ -183,7 +253,8 @@ elif choix in (15, 16):
                            (l["pilote_b"], "k:" + k, {"couleur": "#D85A30"})]
                 noeuds.setdefault(l["pilote_a"], noeud(l["pilote_a"], "Driver", taille=28, couleur="#BA7517"))
                 noeuds.setdefault(l["pilote_b"], noeud(l["pilote_b"], "Driver", taille=28, couleur="#BA7517"))
-    st.caption("Plus courtes chaînes de coéquipiers (relation TEAMMATE_OF)"
+    st.caption("Plus courtes chaînes dans le réseau des coéquipiers (TEAMMATE_OF) et des académies "
+               "(MEMBER_OF, losanges violets)"
                + (" ; en orange carré, les écuries communes." if choix == 16 else "."))
     graphe(noeuds, aretes, hauteur=600)
 
