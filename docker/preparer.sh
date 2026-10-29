@@ -44,6 +44,23 @@ case "${NEO4J_EDITION}" in
   *) echec "NEO4J_EDITION=${NEO4J_EDITION} : community ou enterprise attendu" ;;
 esac
 
+# Mémoire de Neo4j : limite du conteneur >= tas + cache de pages + 1 Go de mémoire
+# native. En dessous, la JVM se fige et le healthcheck expire (constaté le 29/10/2026).
+taille_mo() {
+  case "$1" in
+    *[gG]) n="${1%[gG]}"; m=1024 ;;
+    *[mM]) n="${1%[mM]}"; m=1 ;;
+    *) echec "taille « $1 » illisible : écrire par exemple 768m ou 3g" ;;
+  esac
+  case "${n}" in ''|*[!0-9]*) echec "taille « $1 » illisible : nombre entier attendu (768m, 3g)" ;; esac
+  echo $(( n * m ))
+}
+requis=$(( $(taille_mo "${NEO4J_HEAP}") + $(taille_mo "${NEO4J_PAGECACHE}") + 1024 ))
+limite=$(taille_mo "${NEO4J_MEM_LIMIT}")
+[ "${limite}" -ge "${requis}" ] \
+  || echec "NEO4J_MEM_LIMIT=${NEO4J_MEM_LIMIT} (${limite} Mo) < tas ${NEO4J_HEAP} + cache ${NEO4J_PAGECACHE} + 1 Go (${requis} Mo)"
+ok "mémoire Neo4j : ${limite} Mo pour ${requis} Mo requis"
+
 [ "${HOTE_UID}" = "$(id -u)" ] || echec "HOTE_UID=${HOTE_UID} mais id -u=$(id -u) : les fichiers des volumes seraient illisibles"
 [ "${HOTE_GID}" = "$(id -g)" ] || echec "HOTE_GID=${HOTE_GID} mais id -g=$(id -g)"
 gid_socket=$(stat -c %g /var/run/docker.sock 2>/dev/null || echo "?")

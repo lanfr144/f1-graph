@@ -68,8 +68,9 @@ services:
       # date() côté serveur dans le même fuseau que le chargeur.
       NEO4J_db_temporal_timezone: "${TZ:?}"
       # Lus par le healthcheck ; préfixe F1_ car l'image convertit les NEO4J_* en réglages.
-      F1_BOLT_PORT: "${NEO4J_BOLT_PORT:?}"
+      F1_HTTP_PORT: "${NEO4J_HTTP_PORT:?}"
       F1_NEO4J_USER: "${NEO4J_USER:?}"
+      F1_NEO4J_DATABASE: "${NEO4J_DATABASE:?}"
       TZ: "${TZ:?}"
     ports:
       - "${ECOUTE_HOTE:?}:${NEO4J_HTTP_PORT_HOTE:?}:${NEO4J_HTTP_PORT:?}"
@@ -78,8 +79,12 @@ services:
       - "${NEO4J_DONNEES_HOTE:?}:/data"
       - "${NEO4J_JOURNAUX_HOTE:?}:/logs"
     # Une requête qui renvoie une ligne, et non « le processus existe ».
+    # Par l'API HTTP de requêtes et curl, PAS par cypher-shell : cypher-shell lance une
+    # JVM à chaque vérification ; quand elle dépassait le délai, Docker la déclarait en
+    # échec sans la tuer, et des dizaines de JVM accumulées ont saturé la machine
+    # (charge 84, 29/10/2026). --max-time borne curl sous le délai de Docker.
     healthcheck:
-      test: ["CMD-SHELL", "/var/lib/neo4j/bin/cypher-shell -a bolt://localhost:$${F1_BOLT_PORT} -u \"$${F1_NEO4J_USER}\" -p \"$${NEO4J_AUTH#*/}\" --format plain 'RETURN 1 AS ok' | grep -qx 1"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 8 -u \"$${F1_NEO4J_USER}:$${NEO4J_AUTH#*/}\" -H 'Content-Type: application/json' -d '{\"statement\": \"RETURN 1 AS ok\"}' \"http://localhost:$${F1_HTTP_PORT}/db/$${F1_NEO4J_DATABASE}/query/v2\" | grep -q '\"values\":\\[\\[1\\]\\]'"]
       interval: 15s
       timeout: 10s
       retries: 5
