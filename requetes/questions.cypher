@@ -39,6 +39,13 @@
 
 
 // === Q1 | What recent event has left its mark on the world of F1 over the last few weeks? Who took part in the races during this event, and what were the results?
+// @simple On cherche le dernier Grand Prix couru, puis toutes les courses des quatre
+// @simple semaines qui le précèdent (la période s'allonge pendant l'hiver, quand il n'y
+// @simple a pas de course). Pour chaque course, on relève ce qui sort de l'ordinaire :
+// @simple un pilote qui gagne pour la première fois, une victoire partie de loin sur la
+// @simple grille, un changement de leader au championnat, beaucoup d'abandons. La course
+// @simple qui cumule le plus de ces faits arrive en tête, avec la liste complète des
+// @simple pilotes et de leurs résultats.
 // Couverture : complète. Fenêtre : les $semaines semaines qui précèdent le dernier
 // Grand Prix disputé, jusqu'à aujourd'hui — elle s'allonge d'elle-même pendant
 // l'intersaison. Les Grands Prix de la fenêtre sont classés par nombre de faits
@@ -107,6 +114,10 @@ ORDER BY size(faits_marquants) DESC, r.date DESC;
 
 
 // === Q2 | Which opponents are facing each other again, and what is their head-to-head record?
+// @simple On prend la prochaine course au calendrier et les pilotes de cette saison.
+// @simple Pour chaque paire de pilotes, on retrouve toutes les courses qu'ils ont
+// @simple disputées ensemble, et on compte combien de fois chacun a fini devant l'autre.
+// @simple Les paires qui se sont affrontées le plus souvent apparaissent en premier.
 // Couverture : complète, à une approximation près : l'API ne publie pas la liste
 // des engagés d'une course future ; la grille retenue est celle de la saison de
 // la prochaine course (ou de la dernière, pendant l'intersaison). Face-à-face =
@@ -148,6 +159,10 @@ LIMIT 25;
 
 
 // === Q3 | Which participants are facing a former team or former teammates?
+// @simple Pour chaque pilote de la saison, on regarde son passé : les écuries où il a
+// @simple couru, et les pilotes qui ont été ses coéquipiers. On ne garde que ceux qu'il
+// @simple va affronter : une ancienne écurie toujours en course, ou un ancien coéquipier
+// @simple qui roule maintenant pour une autre écurie.
 // Couverture : complète. Pour chaque pilote de la grille retenue : ses anciennes
 // écuries encore engagées contre lui, et ses anciens coéquipiers désormais dans
 // une autre écurie que la sienne.
@@ -188,6 +203,11 @@ ORDER BY pilote;
 
 
 // === Q4 | Who has moved up or down in the rankings since the previous week?
+// @simple On refait le classement du championnat deux fois, en additionnant les points
+// @simple de chaque pilote : après l'avant-dernière course, puis après la dernière. On
+// @simple compare les deux places : un nombre positif veut dire que le pilote est monté.
+// @simple La colonne « rang officiel » vérifie que le calcul retrouve bien le classement
+// @simple officiel.
 // Couverture : complète pour la saison en cours. « Semaine précédente » = manche
 // précédente. Le classement est recalculé (points de course et de sprint cumulés) :
 // l'API ne publie que le classement après la dernière manche, rapporté en regard
@@ -230,6 +250,10 @@ ORDER BY rang_apres;
 
 
 // === Q5 | Which athletes have had the same coach, and during the same period?
+// @simple En F1, l'équivalent d'un entraîneur commun est une académie de pilotes :
+// @simple l'école de jeunes pilotes d'une écurie (Red Bull, Ferrari…). On cherche les
+// @simple paires de pilotes passés par la même académie, et les années pendant
+// @simple lesquelles ils y étaient en même temps.
 // Couverture : complète, par substitution. « Même entraîneur » = même ACADÉMIE de
 // pilotes (Wikipédia) ; « même période » = années d'adhésion qui se chevauchent.
 // Une adhésion en cours compte jusqu'à l'année courante. Les coéquipiers (même
@@ -252,6 +276,9 @@ LIMIT 30;
 
 
 // === Q6 | Which upcoming events involve participants followed by the newsroom?
+// @simple La rédaction a déclaré qui elle suit : Max Verstappen, Isack Hadjar et
+// @simple l'écurie Red Bull. On prend les trois prochaines courses au calendrier et on
+// @simple indique, pour chacune, lesquels de ces pilotes et écuries y prennent part.
 // Couverture : complète, dès que la rédaction renseigne referentiel/suivis.csv
 // (pilotes ou écuries qu'elle suit). Sans suivi déclaré, la réponse est vide : rien
 // n'est deviné. Engagés d'une course future = pilotes et écuries de sa saison,
@@ -278,6 +305,10 @@ ORDER BY date;
 
 
 // === Q7 | Who has performed best against the highest-ranked opponents at the time of the match?
+// @simple Avant chaque course, on calcule qui sont les trois premiers du championnat à
+// @simple ce moment-là : les favoris. Puis on compte, pour chaque pilote, combien de
+// @simple fois il a fini devant l'un d'eux. Le classement donne le pourcentage de ces «
+// @simple duels » gagnés contre les meilleurs, sur les cinq dernières saisons.
 // Couverture : complète. « Les mieux classés au moment du match » = les $top
 // premiers au championnat recalculé avant la course (manches précédentes de la
 // saison). Duel gagné = arrivée devant l'un d'eux. Première manche exclue (pas
@@ -317,10 +348,16 @@ LIMIT 15;
 
 
 // === Q8 | Which participants are facing a former team or former teammates?
+// @simple Même question que la 3 : voir son explication.
 // Doublon de la question 3 : même requête, voir Q3.
 
 
 // === Q9 | What transfers or coaching changes have been announced, and when do they take effect?
+// @simple On compare la saison actuelle à la précédente. Un pilote qui roule pour une
+// @simple nouvelle écurie a été transféré ; la date retenue est celle de sa première
+// @simple course avec elle. On ajoute les pilotes entrés dans une académie cette année,
+// @simple ou sortis l'an dernier. Les dates d'annonce ne sont pas connues : seulement la
+// @simple date où le changement a pris effet.
 // Couverture : PARTIELLE. Pas de dates d'annonce dans les sources : seuls les
 // changements EFFECTIFS sont connus. Transferts : nouvelle écurie, datée par la
 // première course disputée avec elle. Changements d'encadrement : entrées dans une
@@ -357,11 +394,16 @@ RETURN 'entrée en académie' AS changement, d.fullName AS pilote, '—' AS depu
 UNION ALL
 MATCH (d:Driver)-[m:MEMBER_OF]->(ac:Academy)
 WHERE m.toYear = $saison - 1
-RETURN 'sortie d''académie' AS changement, d.fullName AS pilote, ac.name AS depuis, '—' AS vers,
+RETURN "sortie d'académie" AS changement, d.fullName AS pilote, ac.name AS depuis, '—' AS vers,
         'fin ' + toString($saison - 1) AS effectif;
 
 
 // === Q10 | If a coach is removed from the network, which players or groups become disconnected?
+// @simple Que se passerait-il si une écurie disparaissait ? On compte les pilotes qui
+// @simple n'ont jamais couru que pour elle (ils perdraient tout lien avec les autres
+// @simple pilotes) et les paires de coéquipiers qu'elle seule avait réunies. L'écurie
+// @simple étudiée est choisie automatiquement : celle dont la disparition aurait le plus
+// @simple d'effet.
 // Couverture : PARTIELLE, par analogie. L'encadrement retenu est l'ÉCURIE : la
 // retirer coupe du réseau des coéquipiers les pilotes qui n'ont couru que pour
 // elle, et défait les binômes qu'elle seule réunissait. Les académies ne relient pas
@@ -394,6 +436,11 @@ RETURN k.name AS ecurie,
 
 
 // === Q11 | Which players are indirectly connected through their career paths, without having attended the same academy or shared a coach?
+// @simple Deux pilotes sont « reliés indirectement » quand ils ont eu un coéquipier en
+// @simple commun sans jamais avoir été coéquipiers eux-mêmes, comme deux personnes qui
+// @simple ont un ami commun. On écarte ceux qui sont passés par la même académie. Le
+// @simple résultat montre, pour un pilote donné, qui lui est relié et par
+// @simple l'intermédiaire de qui.
 // Couverture : complète, par substitution. Reliés indirectement = un coéquipier
 // commun (TEAMMATE_OF à deux pas). Exclus : les pilotes déjà coéquipiers (même
 // encadrement d'écurie) et ceux passés par une même académie, à n'importe quelle
@@ -423,27 +470,34 @@ LIMIT 25;
 
 
 // === Q12 | Which coaches connect players from different academies?
+// @simple Pendant une saison, une écurie encadre ses pilotes. On cherche les écuries
+// @simple qui, une même saison, ont fait courir des pilotes formés dans des académies
+// @simple différentes : elles font le pont entre ces académies.
 // Couverture : complète, par substitution. « Entraîneur » = encadrement de course :
 // l'ÉCURIE D'UNE SAISON. Elle relie des académies quand elle fait courir, la même
 // saison, des pilotes formés dans des académies différentes (adhésion commencée
 // avant ou pendant cette saison).
 // @etape Pilotes engagés | (Driver)-[:DROVE_FOR]->(Constructor) | toutes saisons
 // @etape Formation | (Driver)-[:MEMBER_OF]->(Academy) | année d'entrée ≤ saison de l'engagement
-// @etape Écurie-saison | regroupement par écurie et saison | au moins 2 académies DIFFÉRENTES
+// @etape Écurie-saison | regroupement par écurie et saison | au moins 2 académies DIFFÉRENTES et au moins 2 pilotes formés (un pilote passé par deux académies ne suffit pas)
 // @etape Résultat | une ligne par écurie-saison | tri par nombre d'académies, puis saison décroissante ; LIMIT 25
 // --- requête
 MATCH (d:Driver)-[f:DROVE_FOR]->(k:Constructor)
 MATCH (d)-[m:MEMBER_OF]->(ac:Academy)
 WHERE m.fromYear <= f.season
-WITH k, f.season AS saison, collect(DISTINCT ac.name) AS academies,
+WITH k, f.season AS saison, collect(DISTINCT ac.name) AS academies, collect(DISTINCT d) AS formes,
      collect(DISTINCT d.fullName + ' (' + ac.name + ')') AS pilotes
-WHERE size(academies) >= 2
+WHERE size(academies) >= 2 AND size(formes) >= 2
 RETURN k.name AS encadrement, saison, size(academies) AS nb_academies, academies, pilotes
 ORDER BY nb_academies DESC, saison DESC
 LIMIT 25;
 
 
 // === Q13 | Which teams are connected by multiple independent paths, such as a coach, sponsor, executive, or former teammate?
+// @simple Deux écuries peuvent être reliées de plusieurs façons : par un pilote qui a
+// @simple couru pour les deux, ou par une académie qui forme des pilotes pour l'une et
+// @simple en a placé un chez l'autre. On compte ces liens pour chaque paire d'écuries,
+// @simple et on montre celles qui en ont le plus, et de types différents.
 // Couverture : PARTIELLE. Deux types de chemins existent dans les données : le
 // PILOTE passé par les deux écuries, et l'ACADÉMIE qui alimente l'une et a formé
 // un pilote de l'autre. Pas de sponsors ni de dirigeants dans les sources.
@@ -477,6 +531,9 @@ LIMIT 20;
 
 
 // === Q14 | What documented links connect federation decision-makers, the executives of the teams involved, and their sponsors, either directly or through no more than three intermediaries?
+// @simple Cette question demande des informations que personne ne publie sous une forme
+// @simple exploitable : les responsables de la FIA, les dirigeants des écuries, les
+// @simple sponsors. Plutôt que d'inventer des liens, elle reste sans réponse.
 // Couverture : NON COUVERTE. Ni décideurs de la fédération (président de la FIA,
 // directeur de course, commissaires), ni dirigeants d'écurie, ni sponsors dans des
 // sources publiques structurées. Pistes : documents officiels de la FIA (décisions
@@ -485,6 +542,11 @@ LIMIT 20;
 
 
 // === Q15 | Do the champions of the past ten years belong to shared training and coaching networks, even if they never directly shared an organization?
+// @simple On prend les champions du monde des dix dernières années. Pour chaque paire de
+// @simple champions, on regarde s'ils sont passés par une même écurie ou une même
+// @simple académie, puis on cherche le plus court « chemin » qui les relie dans le
+// @simple réseau des coéquipiers et des académies, comme le plus court trajet entre deux
+// @simple villes sur une carte.
 // Couverture : complète, par substitution. Réseau de formation = académies
 // (MEMBER_OF) ; réseau d'encadrement = coéquipiers (TEAMMATE_OF). Pour chaque paire
 // de champions : académies de chacun, académie commune, organisation commune
@@ -514,6 +576,10 @@ ORDER BY longueur_chaine, champion_a;
 
 
 // === Q16 | Do the two opponents have a shared history, such as a team, coach, training center, or mutual teammates? What indirect connections link them?
+// @simple On prend les deux premiers du championnat. On liste tout ce qu'ils ont en
+// @simple commun : les saisons où ils étaient coéquipiers, les écuries et les académies
+// @simple par lesquelles ils sont passés tous les deux, les coéquipiers qu'ils ont eus
+// @simple en commun, et le plus court chemin qui les relie.
 // Couverture : complète, par substitution. Écuries communes, saisons comme
 // coéquipiers (encadrement partagé), académies communes (centre de formation),
 // coéquipiers communs, et plus courte chaîne dans le réseau des coéquipiers et des

@@ -1,8 +1,13 @@
 # Modèle du graphe F1
 
-Base Neo4j des Grands Prix de Formule 1 depuis 1950, alimentée par l'API Jolpica-F1.
-Le modèle ne contient **que ce que la source permet d'alimenter** : ni entraîneurs,
-ni sponsors, ni dirigeants, qu'aucune source publique fiable ne fournit.
+Base Neo4j des Grands Prix de Formule 1 depuis 1950. Trois sources : l'API Jolpica-F1
+(résultats), Wikipédia (académies de pilotes) et la rédaction (pilotes et écuries
+qu'elle suit). Le modèle ne contient **que ce que ces sources permettent d'alimenter** :
+ni directeurs d'équipe, ni sponsors, ni dirigeants, qu'aucune source publique fiable
+ne fournit sous une forme exploitable.
+
+Pour une explication des requêtes accessible sans connaissance technique, voir
+[explication-requetes.md](explication-requetes.md).
 
 ## Nœuds
 
@@ -20,6 +25,20 @@ ni sponsors, ni dirigeants, qu'aucune source publique fiable ne fournit.
 | `QualifyingResult` | `resultId` | `number`, `position`, `q1`…`q3`, `q1Millis`…`q3Millis` | 11 000 |
 | `PitStop` | `pitStopId` (`AAAA-RR-pilote-arrêt`) | `stop`, `lap`, `timeOfDay`, `duration`, `durationMillis` | 13 000 |
 | `LapTime` | `lapTimeId` (`AAAA-RR-pilote-tour`) | `lap`, `position`, `time`, `millis` | selon l'extraction |
+| `Academy` | `academyId` | `name`, `wikipedia`, `revision` (révision de l'article lue), `sourceUrl` | 7 |
+| `Newsroom` | `name` | la rédaction | 1 |
+
+### Académies de pilotes (Wikipédia)
+
+Les programmes de jeunes pilotes des écuries (Red Bull Junior Team, Ferrari Driver
+Academy, Mercedes Junior Programme, Alpine Academy, McLaren Driver Development
+Programme, Williams Driver Academy, Sauber Academy) sont lus dans leurs articles
+Wikipédia en anglais, listés par `referentiel/academies.csv`. Chaque pilote cité est
+rattaché à un `Driver` par le **titre canonique de son article** (redirections résolues
+par l'API de Wikipédia), comparé à celui de l'URL Wikipédia que l'API F1 donne pour le
+pilote : jamais par son nom. Les juniors qui n'ont jamais couru en F1 (environ 250) ne
+correspondent à aucun `Driver` et sont ignorés. Dans les tableaux des diplômés, les
+années retenues sont celles passées **dans l'académie**, et non les années en F1.
 
 ### Pays et nationalités : un seul nœud ISO 3166 alpha-3
 
@@ -47,6 +66,9 @@ est-allemands) et `RHO` (pilotes rhodésiens), avec `withdrawn = true`.
 | `DROVE_FOR` | `Driver` → `Constructor` | une par saison | `key`, `season` |
 | `RANKED_IN` | `Driver`, `Constructor` → `Season` | une par saison | `key`, `position`, `positionText`, `points`, `wins`, `afterRound` |
 | `TEAMMATE_OF` | `Driver` → `Driver` | une par paire | `key`, `seasons`, `constructors`, `firstSeason`, `lastSeason`, `seasonCount` |
+| `MEMBER_OF` | `Driver` → `Academy` | une par période | `key`, `fromYear`, `toYear` (absent si en cours), `ongoing`, `section` |
+| `FEEDS` | `Academy` → `Constructor` | une ou plusieurs | l'académie forme des pilotes pour cette écurie (`referentiel/academies.csv`) |
+| `FOLLOWS` | `Newsroom` → `Driver`, `Constructor` | une par suivi | `remarque` (`referentiel/suivis.csv`) |
 
 `TEAMMATE_OF` est **dérivée** de `DROVE_FOR` (deux pilotes d'une même écurie la même
 saison) et reconstruite à chaque chargement. Elle rend les recherches de chemins entre
@@ -76,6 +98,10 @@ graph LR
   Driver -- "RANKED_IN {position, points}" --> Season
   Constructor -- "RANKED_IN {position, points}" --> Season
   Driver -- "TEAMMATE_OF {seasons} (dérivée)" --> Driver
+  Driver -- "MEMBER_OF {fromYear, toYear}" --> Academy
+  Academy -- FEEDS --> Constructor
+  Newsroom -- FOLLOWS --> Driver
+  Newsroom -- FOLLOWS --> Constructor
 ```
 
 ## Contraintes et index
@@ -96,8 +122,8 @@ graph LR
 
 | Absent | Raison |
 |---|---|
-| Entraîneurs, directeurs d'équipe, ingénieurs | Ni l'API ni Wikidata (1 écurie sur 629 avec un directeur renseigné) |
-| Académies de pilotes | Absentes de l'API ; deux membres recensés dans Wikidata pour la Red Bull Junior Team |
-| Sponsors, dirigeants, fédération | Aucune source publique structurée |
+| Entraîneurs, directeurs d'équipe, ingénieurs | Ni l'API ni Wikidata (1 écurie sur 629 avec un directeur renseigné) ; remplacés selon la question par l'académie (formation) ou l'écurie d'une saison (encadrement) |
+| Sponsors, dirigeants, fédération | Aucune source publique structurée ; question 14 non couverte |
+| Dates d'annonce des transferts | Seules les dates d'effet sont connues (question 9) |
 | Classements après chaque manche | Recalculés à la demande depuis les résultats (question 4) |
 | Historique des numéros permanents | L'API ne donne que le numéro actuel |

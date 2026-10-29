@@ -29,6 +29,8 @@ choix = st.selectbox(
 q = QUESTIONS[choix]
 st.subheader(f"Q{choix} {couverture(q)}")
 st.markdown(f"**{q['titre']}**")
+if q["simple"]:
+    st.success("**En clair.** " + sans_dollar(q["simple"]))
 st.info(sans_dollar(" ".join(q["notes"])))
 
 if not q["requete"]:

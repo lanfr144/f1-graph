@@ -1,15 +1,72 @@
-# Explication des requêtes
+# Comment fonctionnent les requêtes
 
-> Généré par `python questions.py --doc` à partir des lignes `@etape` de
-> `requetes/questions.cypher` — ne pas modifier à la main.
+> Généré par `python questions.py --doc` à partir de `requetes/questions.cypher`
+> (lignes `@simple` et `@etape`) — ne pas modifier à la main.
 
-Chaque question est décomposée en étapes : ce que l'étape **parcourt** dans le graphe,
-puis les **filtres** appliqués (`WHERE`, `LIMIT`, comparaisons). L'interface web
-(page « Questions ») montre en plus le **plan d'exécution** réel de Neo4j.
+Ce document explique chaque question deux fois : **en clair**, pour quelqu'un qui ne
+connaît ni les bases de données ni la programmation, puis **étape par étape**, avec ce
+que la requête parcourt et les filtres qu'elle applique.
+
+## Lire un graphe en cinq minutes
+
+La base n'est pas un tableau Excel, mais un **graphe** : un dessin fait de points et de
+flèches.
+
+- Un **nœud** est une chose : un pilote (`Driver`), une écurie (`Constructor`), une
+  course (`Race`), une saison (`Season`), une académie de jeunes pilotes (`Academy`)…
+- Une **relation** est une flèche qui relie deux nœuds et dit comment ils sont liés :
+  `Max Verstappen —DROVE_FOR→ Red Bull` se lit « Max Verstappen a couru pour Red Bull ».
+- Les nœuds et les flèches portent des **propriétés** : la date d'une course, la saison
+  d'un engagement, les points d'un résultat.
+
+Les flèches les plus utilisées :
+
+| Flèche | Se lit |
+|---|---|
+| `Driver —DROVE_FOR {season}→ Constructor` | le pilote a couru pour cette écurie, cette saison-là |
+| `RaceResult —IN_RACE→ Race`, `—OF_DRIVER→ Driver` | ce résultat est celui de ce pilote, dans cette course |
+| `Driver —TEAMMATE_OF→ Driver` | ces deux pilotes ont été coéquipiers (même écurie, même saison) |
+| `Driver —MEMBER_OF→ Academy` | le pilote a été formé dans cette académie, de telle année à telle année |
+| `Driver —RANKED_IN→ Season` | sa place au classement final de la saison |
+| `Newsroom —FOLLOWS→ Driver` | la rédaction suit ce pilote |
+
+## Lire une requête : six mots suffisent
+
+Une requête (langage **Cypher**) décrit un petit dessin à chercher dans le grand graphe,
+puis ce qu'on en garde.
+
+| Mot | Ce qu'il fait | Exemple en clair |
+|---|---|---|
+| `MATCH` | **cherche** un motif : des nœuds reliés par des flèches | « trouve les pilotes qui ont couru pour une écurie » |
+| `WHERE` | **filtre** : ne garde que ce qui respecte une condition | « … seulement en 2026 » |
+| `WITH` | passe à l'**étape suivante** en ne gardant que certaines informations | « avec ces pilotes, maintenant… » |
+| `RETURN` | **affiche** le résultat | « montre le nom et le nombre de victoires » |
+| `ORDER BY` / `LIMIT` | **trie**, puis ne garde que les premiers | « les 10 meilleurs » |
+| `count`, `sum`, `collect` | **compte**, **additionne**, **rassemble en liste** | « nombre de courses ensemble » |
+
+Quelques formes reviennent souvent :
+
+- `(a)-[:TEAMMATE_OF]-(b)` : un motif ; les parenthèses sont des nœuds, les crochets des
+  flèches ;
+- `EXISTS { … }` / `NOT EXISTS { … }` : « il existe » / « il n'existe pas » un tel motif ;
+- `shortestPath(…)` : le plus court chemin entre deux nœuds, comme un trajet sur une carte ;
+- `$saison`, `$a` : des **paramètres**, c'est-à-dire des valeurs remplies avant l'exécution.
+  Chaque question commence souvent par une **prérequête**, qui va chercher dans la base
+  une valeur utile (la dernière saison, les deux premiers du championnat…).
+
+Dans l'interface web (page « Questions »), le volet « Comprendre la requête » dessine ces
+étapes, et le **plan d'exécution** montre ce que Neo4j fait réellement, opérateur par
+opérateur (en orange, les filtres).
+
+---
 
 ## Q1 — What recent event has left its mark on the world of F1 over the last few weeks? Who took part in the races during this event, and what were the results?
 
-Couverture : complète. Fenêtre : les $semaines semaines qui précèdent le dernier Grand Prix disputé, jusqu'à aujourd'hui — elle s'allonge d'elle-même pendant l'intersaison. Les Grands Prix de la fenêtre sont classés par nombre de faits marquants (première victoire, victoire partie loin, changement de leader au championnat, hécatombe d'abandons), puis du plus récent au plus ancien : la première ligne est l'événement qui a le plus marqué.
+**En clair.** On cherche le dernier Grand Prix couru, puis toutes les courses des quatre semaines qui le précèdent (la période s'allonge pendant l'hiver, quand il n'y a pas de course). Pour chaque course, on relève ce qui sort de l'ordinaire : un pilote qui gagne pour la première fois, une victoire partie de loin sur la grille, un changement de leader au championnat, beaucoup d'abandons. La course qui cumule le plus de ces faits arrive en tête, avec la liste complète des pilotes et de leurs résultats.
+
+*Couverture : complète. Fenêtre : les $semaines semaines qui précèdent le dernier Grand Prix disputé, jusqu'à aujourd'hui — elle s'allonge d'elle-même pendant l'intersaison. Les Grands Prix de la fenêtre sont classés par nombre de faits marquants (première victoire, victoire partie loin, changement de leader au championnat, hécatombe d'abandons), puis du plus récent au plus ancien : la première ligne est l'événement qui a le plus marqué.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -37,7 +94,11 @@ flowchart TD
 
 ## Q2 — Which opponents are facing each other again, and what is their head-to-head record?
 
-Couverture : complète, à une approximation près : l'API ne publie pas la liste des engagés d'une course future ; la grille retenue est celle de la saison de la prochaine course (ou de la dernière, pendant l'intersaison). Face-à-face = courses disputées par les deux ; devant = mieux classé (abandons compris).
+**En clair.** On prend la prochaine course au calendrier et les pilotes de cette saison. Pour chaque paire de pilotes, on retrouve toutes les courses qu'ils ont disputées ensemble, et on compte combien de fois chacun a fini devant l'autre. Les paires qui se sont affrontées le plus souvent apparaissent en premier.
+
+*Couverture : complète, à une approximation près : l'API ne publie pas la liste des engagés d'une course future ; la grille retenue est celle de la saison de la prochaine course (ou de la dernière, pendant l'intersaison). Face-à-face = courses disputées par les deux ; devant = mieux classé (abandons compris).*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -62,7 +123,11 @@ flowchart TD
 
 ## Q3 — Which participants are facing a former team or former teammates?
 
-Couverture : complète. Pour chaque pilote de la grille retenue : ses anciennes écuries encore engagées contre lui, et ses anciens coéquipiers désormais dans une autre écurie que la sienne.
+**En clair.** Pour chaque pilote de la saison, on regarde son passé : les écuries où il a couru, et les pilotes qui ont été ses coéquipiers. On ne garde que ceux qu'il va affronter : une ancienne écurie toujours en course, ou un ancien coéquipier qui roule maintenant pour une autre écurie.
+
+*Couverture : complète. Pour chaque pilote de la grille retenue : ses anciennes écuries encore engagées contre lui, et ses anciens coéquipiers désormais dans une autre écurie que la sienne.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -87,7 +152,11 @@ flowchart TD
 
 ## Q4 — Who has moved up or down in the rankings since the previous week?
 
-Couverture : complète pour la saison en cours. « Semaine précédente » = manche précédente. Le classement est recalculé (points de course et de sprint cumulés) : l'API ne publie que le classement après la dernière manche, rapporté en regard (rang_officiel) pour contrôle. Égalité de points : départage au nombre de meilleures places en Grand Prix (victoires, puis deuxièmes places…), arrivées classées seulement. Avant 1991, les résultats décomptés font diverger ce calcul.
+**En clair.** On refait le classement du championnat deux fois, en additionnant les points de chaque pilote : après l'avant-dernière course, puis après la dernière. On compare les deux places : un nombre positif veut dire que le pilote est monté. La colonne « rang officiel » vérifie que le calcul retrouve bien le classement officiel.
+
+*Couverture : complète pour la saison en cours. « Semaine précédente » = manche précédente. Le classement est recalculé (points de course et de sprint cumulés) : l'API ne publie que le classement après la dernière manche, rapporté en regard (rang_officiel) pour contrôle. Égalité de points : départage au nombre de meilleures places en Grand Prix (victoires, puis deuxièmes places…), arrivées classées seulement. Avant 1991, les résultats décomptés font diverger ce calcul.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -112,7 +181,11 @@ flowchart TD
 
 ## Q5 — Which athletes have had the same coach, and during the same period?
 
-Couverture : complète, par substitution. « Même entraîneur » = même ACADÉMIE de pilotes (Wikipédia) ; « même période » = années d'adhésion qui se chevauchent. Une adhésion en cours compte jusqu'à l'année courante. Les coéquipiers (même écurie, même saison) sont l'autre équivalent : relation TEAMMATE_OF, question 16.
+**En clair.** En F1, l'équivalent d'un entraîneur commun est une académie de pilotes : l'école de jeunes pilotes d'une écurie (Red Bull, Ferrari…). On cherche les paires de pilotes passés par la même académie, et les années pendant lesquelles ils y étaient en même temps.
+
+*Couverture : complète, par substitution. « Même entraîneur » = même ACADÉMIE de pilotes (Wikipédia) ; « même période » = années d'adhésion qui se chevauchent. Une adhésion en cours compte jusqu'à l'année courante. Les coéquipiers (même écurie, même saison) sont l'autre équivalent : relation TEAMMATE_OF, question 16.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -131,7 +204,11 @@ flowchart TD
 
 ## Q6 — Which upcoming events involve participants followed by the newsroom?
 
-Couverture : complète, dès que la rédaction renseigne referentiel/suivis.csv (pilotes ou écuries qu'elle suit). Sans suivi déclaré, la réponse est vide : rien n'est deviné. Engagés d'une course future = pilotes et écuries de sa saison, l'API ne publiant pas la liste des engagés.
+**En clair.** La rédaction a déclaré qui elle suit : Max Verstappen, Isack Hadjar et l'écurie Red Bull. On prend les trois prochaines courses au calendrier et on indique, pour chacune, lesquels de ces pilotes et écuries y prennent part.
+
+*Couverture : complète, dès que la rédaction renseigne referentiel/suivis.csv (pilotes ou écuries qu'elle suit). Sans suivi déclaré, la réponse est vide : rien n'est deviné. Engagés d'une course future = pilotes et écuries de sa saison, l'API ne publiant pas la liste des engagés.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -153,7 +230,11 @@ flowchart TD
 
 ## Q7 — Who has performed best against the highest-ranked opponents at the time of the match?
 
-Couverture : complète. « Les mieux classés au moment du match » = les $top premiers au championnat recalculé avant la course (manches précédentes de la saison). Duel gagné = arrivée devant l'un d'eux. Première manche exclue (pas encore de classement). Un pilote doit compter au moins $duels_min duels.
+**En clair.** Avant chaque course, on calcule qui sont les trois premiers du championnat à ce moment-là : les favoris. Puis on compte, pour chaque pilote, combien de fois il a fini devant l'un d'eux. Le classement donne le pourcentage de ces « duels » gagnés contre les meilleurs, sur les cinq dernières saisons.
+
+*Couverture : complète. « Les mieux classés au moment du match » = les $top premiers au championnat recalculé avant la course (manches précédentes de la saison). Duel gagné = arrivée devant l'un d'eux. Première manche exclue (pas encore de classement). Un pilote doit compter au moins $duels_min duels.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -178,11 +259,17 @@ flowchart TD
 
 ## Q8 — Which participants are facing a former team or former teammates?
 
-Doublon de la question 3 : même requête, voir Q3.
+**En clair.** Même question que la 3 : voir son explication.
+
+*Doublon de la question 3 : même requête, voir Q3.*
 
 ## Q9 — What transfers or coaching changes have been announced, and when do they take effect?
 
-Couverture : PARTIELLE. Pas de dates d'annonce dans les sources : seuls les changements EFFECTIFS sont connus. Transferts : nouvelle écurie, datée par la première course disputée avec elle. Changements d'encadrement : entrées dans une académie l'année $saison et sorties à la fin de l'année précédente (Wikipédia, à l'année près).
+**En clair.** On compare la saison actuelle à la précédente. Un pilote qui roule pour une nouvelle écurie a été transféré ; la date retenue est celle de sa première course avec elle. On ajoute les pilotes entrés dans une académie cette année, ou sortis l'an dernier. Les dates d'annonce ne sont pas connues : seulement la date où le changement a pris effet.
+
+*Couverture : PARTIELLE. Pas de dates d'annonce dans les sources : seuls les changements EFFECTIFS sont connus. Transferts : nouvelle écurie, datée par la première course disputée avec elle. Changements d'encadrement : entrées dans une académie l'année $saison et sorties à la fin de l'année précédente (Wikipédia, à l'année près).*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -210,7 +297,11 @@ flowchart TD
 
 ## Q10 — If a coach is removed from the network, which players or groups become disconnected?
 
-Couverture : PARTIELLE, par analogie. L'encadrement retenu est l'ÉCURIE : la retirer coupe du réseau des coéquipiers les pilotes qui n'ont couru que pour elle, et défait les binômes qu'elle seule réunissait. Les académies ne relient pas les pilotes entre eux dans ce réseau : les retirer n'isolerait personne.
+**En clair.** Que se passerait-il si une écurie disparaissait ? On compte les pilotes qui n'ont jamais couru que pour elle (ils perdraient tout lien avec les autres pilotes) et les paires de coéquipiers qu'elle seule avait réunies. L'écurie étudiée est choisie automatiquement : celle dont la disparition aurait le plus d'effet.
+
+*Couverture : PARTIELLE, par analogie. L'encadrement retenu est l'ÉCURIE : la retirer coupe du réseau des coéquipiers les pilotes qui n'ont couru que pour elle, et défait les binômes qu'elle seule réunissait. Les académies ne relient pas les pilotes entre eux dans ce réseau : les retirer n'isolerait personne.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -229,7 +320,11 @@ flowchart TD
 
 ## Q11 — Which players are indirectly connected through their career paths, without having attended the same academy or shared a coach?
 
-Couverture : complète, par substitution. Reliés indirectement = un coéquipier commun (TEAMMATE_OF à deux pas). Exclus : les pilotes déjà coéquipiers (même encadrement d'écurie) et ceux passés par une même académie, à n'importe quelle époque.
+**En clair.** Deux pilotes sont « reliés indirectement » quand ils ont eu un coéquipier en commun sans jamais avoir été coéquipiers eux-mêmes, comme deux personnes qui ont un ami commun. On écarte ceux qui sont passés par la même académie. Le résultat montre, pour un pilote donné, qui lui est relié et par l'intermédiaire de qui.
+
+*Couverture : complète, par substitution. Reliés indirectement = un coéquipier commun (TEAMMATE_OF à deux pas). Exclus : les pilotes déjà coéquipiers (même encadrement d'écurie) et ceux passés par une même académie, à n'importe quelle époque.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -254,13 +349,17 @@ flowchart TD
 
 ## Q12 — Which coaches connect players from different academies?
 
-Couverture : complète, par substitution. « Entraîneur » = encadrement de course : l'ÉCURIE D'UNE SAISON. Elle relie des académies quand elle fait courir, la même saison, des pilotes formés dans des académies différentes (adhésion commencée avant ou pendant cette saison).
+**En clair.** Pendant une saison, une écurie encadre ses pilotes. On cherche les écuries qui, une même saison, ont fait courir des pilotes formés dans des académies différentes : elles font le pont entre ces académies.
+
+*Couverture : complète, par substitution. « Entraîneur » = encadrement de course : l'ÉCURIE D'UNE SAISON. Elle relie des académies quand elle fait courir, la même saison, des pilotes formés dans des académies différentes (adhésion commencée avant ou pendant cette saison).*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
 | 1. Pilotes engagés | `(Driver)-[:DROVE_FOR]->(Constructor)` | toutes saisons |
 | 2. Formation | `(Driver)-[:MEMBER_OF]->(Academy)` | année d'entrée ≤ saison de l'engagement |
-| 3. Écurie-saison | `regroupement par écurie et saison` | au moins 2 académies DIFFÉRENTES |
+| 3. Écurie-saison | `regroupement par écurie et saison` | au moins 2 académies DIFFÉRENTES et au moins 2 pilotes formés (un pilote passé par deux académies ne suffit pas) |
 | 4. Résultat | `une ligne par écurie-saison` | tri par nombre d'académies, puis saison décroissante ; LIMIT 25 |
 
 ```mermaid
@@ -268,7 +367,7 @@ flowchart TD
   E1["<b>1. Pilotes engagés</b><br/>(Driver)-[:DROVE_FOR]-#gt;(Constructor)<br/><i>toutes saisons</i>"]
   E2["<b>2. Formation</b><br/>(Driver)-[:MEMBER_OF]-#gt;(Academy)<br/><i>année d'entrée ≤ saison de l'engagement</i>"]
   E1 --> E2
-  E3["<b>3. Écurie-saison</b><br/>regroupement par écurie et saison<br/><i>au moins 2 académies DIFFÉRENTES</i>"]
+  E3["<b>3. Écurie-saison</b><br/>regroupement par écurie et saison<br/><i>au moins 2 académies DIFFÉRENTES et au moins 2 pilotes formés (un pilote passé par deux académies ne suffit pas)</i>"]
   E2 --> E3
   E4["<b>4. Résultat</b><br/>une ligne par écurie-saison<br/><i>tri par nombre d'académies, puis saison décroissante ; LIMIT 25</i>"]
   E3 --> E4
@@ -276,7 +375,11 @@ flowchart TD
 
 ## Q13 — Which teams are connected by multiple independent paths, such as a coach, sponsor, executive, or former teammate?
 
-Couverture : PARTIELLE. Deux types de chemins existent dans les données : le PILOTE passé par les deux écuries, et l'ACADÉMIE qui alimente l'une et a formé un pilote de l'autre. Pas de sponsors ni de dirigeants dans les sources. Chemins indépendants = intermédiaires distincts ; types = nature des chemins.
+**En clair.** Deux écuries peuvent être reliées de plusieurs façons : par un pilote qui a couru pour les deux, ou par une académie qui forme des pilotes pour l'une et en a placé un chez l'autre. On compte ces liens pour chaque paire d'écuries, et on montre celles qui en ont le plus, et de types différents.
+
+*Couverture : PARTIELLE. Deux types de chemins existent dans les données : le PILOTE passé par les deux écuries, et l'ACADÉMIE qui alimente l'une et a formé un pilote de l'autre. Pas de sponsors ni de dirigeants dans les sources. Chemins indépendants = intermédiaires distincts ; types = nature des chemins.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -298,11 +401,17 @@ flowchart TD
 
 ## Q14 — What documented links connect federation decision-makers, the executives of the teams involved, and their sponsors, either directly or through no more than three intermediaries?
 
-Couverture : NON COUVERTE. Ni décideurs de la fédération (président de la FIA, directeur de course, commissaires), ni dirigeants d'écurie, ni sponsors dans des sources publiques structurées. Pistes : documents officiels de la FIA (décisions des commissaires, nominatifs), article Wikipédia « Formula One sponsorship liveries » (sponsors par écurie et par saison, tableaux hétérogènes).
+**En clair.** Cette question demande des informations que personne ne publie sous une forme exploitable : les responsables de la FIA, les dirigeants des écuries, les sponsors. Plutôt que d'inventer des liens, elle reste sans réponse.
+
+*Couverture : NON COUVERTE. Ni décideurs de la fédération (président de la FIA, directeur de course, commissaires), ni dirigeants d'écurie, ni sponsors dans des sources publiques structurées. Pistes : documents officiels de la FIA (décisions des commissaires, nominatifs), article Wikipédia « Formula One sponsorship liveries » (sponsors par écurie et par saison, tableaux hétérogènes).*
 
 ## Q15 — Do the champions of the past ten years belong to shared training and coaching networks, even if they never directly shared an organization?
 
-Couverture : complète, par substitution. Réseau de formation = académies (MEMBER_OF) ; réseau d'encadrement = coéquipiers (TEAMMATE_OF). Pour chaque paire de champions : académies de chacun, académie commune, organisation commune (écurie ou académie), et plus courte chaîne dans le réseau mêlant les deux.
+**En clair.** On prend les champions du monde des dix dernières années. Pour chaque paire de champions, on regarde s'ils sont passés par une même écurie ou une même académie, puis on cherche le plus court « chemin » qui les relie dans le réseau des coéquipiers et des académies, comme le plus court trajet entre deux villes sur une carte.
+
+*Couverture : complète, par substitution. Réseau de formation = académies (MEMBER_OF) ; réseau d'encadrement = coéquipiers (TEAMMATE_OF). Pour chaque paire de champions : académies de chacun, académie commune, organisation commune (écurie ou académie), et plus courte chaîne dans le réseau mêlant les deux.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|
@@ -327,7 +436,11 @@ flowchart TD
 
 ## Q16 — Do the two opponents have a shared history, such as a team, coach, training center, or mutual teammates? What indirect connections link them?
 
-Couverture : complète, par substitution. Écuries communes, saisons comme coéquipiers (encadrement partagé), académies communes (centre de formation), coéquipiers communs, et plus courte chaîne dans le réseau des coéquipiers et des académies.
+**En clair.** On prend les deux premiers du championnat. On liste tout ce qu'ils ont en commun : les saisons où ils étaient coéquipiers, les écuries et les académies par lesquelles ils sont passés tous les deux, les coéquipiers qu'ils ont eus en commun, et le plus court chemin qui les relie.
+
+*Couverture : complète, par substitution. Écuries communes, saisons comme coéquipiers (encadrement partagé), académies communes (centre de formation), coéquipiers communs, et plus courte chaîne dans le réseau des coéquipiers et des académies.*
+
+**Étape par étape.**
 
 | Étape | Parcourt | Filtres |
 |---|---|---|

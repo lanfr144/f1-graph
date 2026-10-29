@@ -31,7 +31,7 @@ def lire_questions() -> dict[int, dict]:
     for bloc in re.split(r"^// === Q", texte, flags=re.M)[1:]:
         entete, _, reste = bloc.partition("\n")
         numero, _, titre = entete.partition("|")
-        params, notes, sections, etapes = {}, [], [], []
+        params, notes, sections, etapes, simple = {}, [], [], [], []
         courante = None  # None : commentaires d'en-tête du bloc
         for ligne in reste.splitlines():
             m = re.match(r"// --- (prérequête|requête)\b\s*:?\s*(.*)", ligne)
@@ -41,7 +41,10 @@ def lire_questions() -> dict[int, dict]:
             elif courante is None:
                 p = re.match(r"// @param (\w+) = (.+)", ligne)
                 e = re.match(r"// @etape (.+)", ligne)
-                if p:
+                c = re.match(r"// @simple (.+)", ligne)
+                if c:
+                    simple.append(c[1].strip())  # explication en langage courant
+                elif p:
                     params[p[1]] = p[2].strip()
                 elif e:
                     # « titre | motif parcouru | filtres appliqués »
@@ -61,6 +64,7 @@ def lire_questions() -> dict[int, dict]:
             sec["cypher"] = "\n".join(sec.pop("lignes")).strip().rstrip(";").strip()
         questions[int(numero)] = {
             "titre": titre.strip(), "notes": notes, "params": params, "etapes": etapes,
+            "simple": " ".join(simple),
             "prerequetes": [s for s in sections if s["genre"] == "prérequête" and s["cypher"]],
             "requete": next((s["cypher"] for s in sections if s["genre"] == "requête" and s["cypher"]), ""),
         }
@@ -139,20 +143,82 @@ def explication_mermaid(q: dict) -> str:
     return "\n".join(lignes)
 
 
+GUIDE = """# Comment fonctionnent les requêtes
+
+> Généré par `python questions.py --doc` à partir de `requetes/questions.cypher`
+> (lignes `@simple` et `@etape`) — ne pas modifier à la main.
+
+Ce document explique chaque question deux fois : **en clair**, pour quelqu'un qui ne
+connaît ni les bases de données ni la programmation, puis **étape par étape**, avec ce
+que la requête parcourt et les filtres qu'elle applique.
+
+## Lire un graphe en cinq minutes
+
+La base n'est pas un tableau Excel, mais un **graphe** : un dessin fait de points et de
+flèches.
+
+- Un **nœud** est une chose : un pilote (`Driver`), une écurie (`Constructor`), une
+  course (`Race`), une saison (`Season`), une académie de jeunes pilotes (`Academy`)…
+- Une **relation** est une flèche qui relie deux nœuds et dit comment ils sont liés :
+  `Max Verstappen —DROVE_FOR→ Red Bull` se lit « Max Verstappen a couru pour Red Bull ».
+- Les nœuds et les flèches portent des **propriétés** : la date d'une course, la saison
+  d'un engagement, les points d'un résultat.
+
+Les flèches les plus utilisées :
+
+| Flèche | Se lit |
+|---|---|
+| `Driver —DROVE_FOR {season}→ Constructor` | le pilote a couru pour cette écurie, cette saison-là |
+| `RaceResult —IN_RACE→ Race`, `—OF_DRIVER→ Driver` | ce résultat est celui de ce pilote, dans cette course |
+| `Driver —TEAMMATE_OF→ Driver` | ces deux pilotes ont été coéquipiers (même écurie, même saison) |
+| `Driver —MEMBER_OF→ Academy` | le pilote a été formé dans cette académie, de telle année à telle année |
+| `Driver —RANKED_IN→ Season` | sa place au classement final de la saison |
+| `Newsroom —FOLLOWS→ Driver` | la rédaction suit ce pilote |
+
+## Lire une requête : six mots suffisent
+
+Une requête (langage **Cypher**) décrit un petit dessin à chercher dans le grand graphe,
+puis ce qu'on en garde.
+
+| Mot | Ce qu'il fait | Exemple en clair |
+|---|---|---|
+| `MATCH` | **cherche** un motif : des nœuds reliés par des flèches | « trouve les pilotes qui ont couru pour une écurie » |
+| `WHERE` | **filtre** : ne garde que ce qui respecte une condition | « … seulement en 2026 » |
+| `WITH` | passe à l'**étape suivante** en ne gardant que certaines informations | « avec ces pilotes, maintenant… » |
+| `RETURN` | **affiche** le résultat | « montre le nom et le nombre de victoires » |
+| `ORDER BY` / `LIMIT` | **trie**, puis ne garde que les premiers | « les 10 meilleurs » |
+| `count`, `sum`, `collect` | **compte**, **additionne**, **rassemble en liste** | « nombre de courses ensemble » |
+
+Quelques formes reviennent souvent :
+
+- `(a)-[:TEAMMATE_OF]-(b)` : un motif ; les parenthèses sont des nœuds, les crochets des
+  flèches ;
+- `EXISTS { … }` / `NOT EXISTS { … }` : « il existe » / « il n'existe pas » un tel motif ;
+- `shortestPath(…)` : le plus court chemin entre deux nœuds, comme un trajet sur une carte ;
+- `$saison`, `$a` : des **paramètres**, c'est-à-dire des valeurs remplies avant l'exécution.
+  Chaque question commence souvent par une **prérequête**, qui va chercher dans la base
+  une valeur utile (la dernière saison, les deux premiers du championnat…).
+
+Dans l'interface web (page « Questions »), le volet « Comprendre la requête » dessine ces
+étapes, et le **plan d'exécution** montre ce que Neo4j fait réellement, opérateur par
+opérateur (en orange, les filtres).
+
+---
+"""
+
+
 def generer_doc(questions: dict) -> str:
-    """docs/explication-requetes.md : pour chaque question, ses étapes et leurs filtres."""
-    sortie = ["# Explication des requêtes", "",
-              "> Généré par `python questions.py --doc` à partir des lignes `@etape` de",
-              "> `requetes/questions.cypher` — ne pas modifier à la main.", "",
-              "Chaque question est décomposée en étapes : ce que l'étape **parcourt** dans le graphe,",
-              "puis les **filtres** appliqués (`WHERE`, `LIMIT`, comparaisons). L'interface web",
-              "(page « Questions ») montre en plus le **plan d'exécution** réel de Neo4j.", ""]
+    """docs/explication-requetes.md : guide de lecture, puis chaque question en clair et pas à pas."""
+    sortie = [GUIDE]
     for n in sorted(questions):
         q = questions[n]
-        sortie += [f"## Q{n} — {q['titre']}", "", " ".join(q["notes"]), ""]
+        sortie += [f"## Q{n} — {q['titre']}", ""]
+        if q["simple"]:
+            sortie += [f"**En clair.** {q['simple']}", ""]
+        sortie += [f"*{' '.join(q['notes'])}*", ""]
         if not q["etapes"]:
             continue
-        sortie += ["| Étape | Parcourt | Filtres |", "|---|---|---|"]
+        sortie += ["**Étape par étape.**", "", "| Étape | Parcourt | Filtres |", "|---|---|---|"]
         sortie += [f"| {i}. {e['titre']} | `{e['motif'].replace('|', '¦')}` | {e['filtres'].replace('|', '¦') or '—'} |"
                    for i, e in enumerate(q["etapes"], 1)]
         sortie += ["", "```mermaid", explication_mermaid(q), "```", ""]

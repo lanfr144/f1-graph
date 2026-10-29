@@ -33,7 +33,8 @@ Description complète : [docs/modele-graphe.md](docs/modele-graphe.md), égaleme
 affichée, avec les volumes réels, par la page « Modèle du graphe » de l'interface.
 
 - **Nœuds** : `Season`, `Circuit`, `Country:Nationality`, `Driver`, `Constructor`,
-  `Status`, `Race`, `RaceResult`, `SprintResult`, `QualifyingResult`, `PitStop`, `LapTime`.
+  `Status`, `Race`, `RaceResult`, `SprintResult`, `QualifyingResult`, `PitStop`, `LapTime`,
+  `Academy` (académies de pilotes, Wikipédia) et `Newsroom` (la rédaction).
 - **Pays et nationalités** : un seul nœud par code ISO 3166 alpha-3, porteur des deux
   étiquettes. « France » et « French » sont le même nœud `FRA`, nommé et qualifié en
   anglais comme en français. Les libellés de l'API sont traduits par
@@ -41,9 +42,14 @@ affichée, avec les volumes réels, par la page « Modèle du graphe » de l'int
 - **Relations** : `IN_SEASON`, `HELD_AT`, `LOCATED_IN`, `HAS_NATIONALITY`, `IN_RACE`,
   `OF_DRIVER`, `FOR_CONSTRUCTOR`, `WITH_STATUS`, `DROVE_FOR {season}`, `RANKED_IN`, et
   `TEAMMATE_OF`, dérivée de `DROVE_FOR`, qui rend instantanées les recherches de chemins
-  entre pilotes.
-- **Absent, faute de source** : entraîneurs, directeurs d'équipe, académies, sponsors,
-  dirigeants, fédération (voir la documentation du modèle).
+  entre pilotes ; `MEMBER_OF {fromYear, toYear}` (pilote → académie), `FEEDS` (académie →
+  écurie) et `FOLLOWS` (rédaction → pilote ou écurie).
+- **Données complémentaires** ([complements.py](complements.py)) : 7 académies lues dans
+  Wikipédia, pilotes rattachés par le titre canonique de leur article (jamais par leur
+  nom) ; suivis de la rédaction tenus dans [referentiel/suivis.csv](referentiel/suivis.csv)
+  (Max Verstappen, Isack Hadjar, Red Bull).
+- **Absent, faute de source** : directeurs d'équipe, sponsors, dirigeants, fédération
+  (voir la documentation du modèle).
 
 ## Schéma
 
@@ -136,11 +142,16 @@ avec les résultats chargés. Code de sortie 1 au moindre écart.
 
 [requetes/questions.cypher](requetes/questions.cypher) répond, en Cypher, à seize
 questions éditoriales transposées à la F1 (événement = Grand Prix, équipe = écurie,
-coéquipiers = même écurie la même saison). Chacune indique sa couverture :
-**complète**, **partielle** (la part que les données permettent, et ce qui manque)
-ou **non couverte** : la source ne contient ni entraîneurs, ni académies, ni
-sponsors, ni dirigeants, ni fédération, ni rédaction, et aucune relation n'est
-inventée pour y suppléer.
+coéquipiers = même écurie la même saison, entraîneur = académie de pilotes ou écurie
+d'une saison). Chacune indique sa couverture : **complète**, **partielle** (ce qui
+manque est dit) ou **non couverte** (question 14 : aucune source pour la fédération,
+les dirigeants et les sponsors ; aucune relation n'est inventée pour y suppléer).
+
+Chaque question est expliquée **en clair**, pour un lecteur sans connaissance technique,
+puis **étape par étape** (ce que la requête parcourt, les filtres appliqués) :
+[docs/explication-requetes.md](docs/explication-requetes.md), généré par
+`questions.py --doc`, qui commence par un guide de lecture des graphes et de Cypher.
+L'interface web montre les mêmes explications, plus le plan d'exécution de Neo4j.
 
 ```bash
 .venv/Scripts/python questions.py --liste
@@ -192,11 +203,13 @@ propres licences, ci-dessous.
 
 ## Données et licence
 
-Deux sources, aucune versionnée :
+Trois sources externes, aucune versionnée :
 
 - **Jolpica-F1** (résultats) : CC BY-NC-SA 4.0 ;
 - **iso-codes** du projet Debian (codes ISO 3166 et noms français des pays) :
-  LGPL-2.1-or-later, version épinglée, téléchargée par le pipeline.
+  LGPL-2.1-or-later, version épinglée, téléchargée par le pipeline ;
+- **Wikipédia** (académies de pilotes) : CC BY-SA 4.0, révision de chaque article
+  tracée dans SOURCES.md, cache relu au plus tous les 7 jours.
 
 
 Les données Jolpica-F1 sont sous licence **CC BY-NC-SA 4.0** : usage non commercial,
