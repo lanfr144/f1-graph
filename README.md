@@ -195,11 +195,37 @@ chaque ligne `@param` du bloc.
 
 ## Licences
 
-Le **code** du projet (scripts, schéma, interface, configuration Docker) est publié
-sous **GNU GPL v3** : voir [LICENSE](LICENSE).
+Trois licences, une par nature de contenu :
 
-Les **données** ne le sont pas : elles ne sont pas dans le dépôt et gardent leurs
-propres licences, ci-dessous.
+| Contenu | Licence |
+|---|---|
+| **Code** : scripts Python, schéma et requêtes Cypher, interface, configuration Docker | **GPL-3.0-or-later** : voir [LICENSE](LICENSE) |
+| **Documentation et référentiels produits par le projet** : `docs/`, `referentiel/*.csv`, ce README | **CC BY-SA 4.0** — <https://creativecommons.org/licenses/by-sa/4.0/> |
+| **Graphe chargé, résultats affichés, sauvegardes de la base** : adaptations des données Jolpica-F1 | **CC BY-NC-SA 4.0** — <https://creativecommons.org/licenses/by-nc-sa/4.0/>, imposée par la source |
+
+Pourquoi ces choix sont compatibles avec les sources :
+
+- **iso-codes** (LGPL-2.1-or-later) et les bibliothèques Python (`neo4j`,
+  `streamlit` : Apache-2.0 ; `pyvis` : BSD-3-Clause) peuvent être utilisées par un
+  programme sous GPL-3.0. Apache-2.0 l'est avec la GPL v3, pas avec la v2 : d'où
+  la v3 au minimum. Neo4j Community (GPL-3.0) tourne comme un service séparé.
+- **Wikipédia** (CC BY-SA 4.0, avec la GFDL en double licence) : Creative Commons
+  déclare la BY-SA 4.0 compatible à sens unique avec la GPL v3 ; la documentation,
+  en BY-SA 4.0, peut reprendre ce qui vient de Wikipédia.
+- **Jolpica-F1** (CC BY-NC-SA 4.0) : aucune licence hors Creative Commons n'est
+  déclarée compatible avec une licence NC. Le code ne contient donc **aucune**
+  donnée Jolpica-F1 : il les télécharge, il ne les redistribue pas. En revanche,
+  tout ce qui en est tiré (le graphe, les résultats, les sauvegardes, une capture
+  d'écran de l'interface) reste sous **BY-NC-SA 4.0** : **attribution, aucun usage
+  commercial, et partage sous la même licence**. Un usage commercial demande
+  l'accord de l'éditeur (voir ses conditions, citées dans [SOURCES.md](SOURCES.md)).
+
+Point en suspens : le graphe réunit des données Jolpica-F1 (BY-NC-SA 4.0) et des
+informations tirées de Wikipédia (BY-SA 4.0), deux clauses « partage à
+l'identique » qui ne se convertissent pas l'une en l'autre. Les relations
+`MEMBER_OF` ne reprennent que des faits (pilote, programme, années), et chaque nœud
+`Academy` porte l'URL de la révision Wikipédia lue (`sourceUrl`) ; avant toute diffusion du graphe ou d'une
+sauvegarde, cette coexistence doit être examinée, pas présumée sans effet.
 
 ## Données et licence
 
