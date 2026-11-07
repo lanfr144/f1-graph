@@ -21,6 +21,12 @@ FOR (r:Race) ON (r.date);
 CREATE RANGE INDEX race_season IF NOT EXISTS
 FOR (r:Race) ON (r.season);
 
+// Grille d'une saison (questions 2, 3, 9 et 11) : sans cet index, Neo4j lit toutes
+// les écuries et tous leurs engagements (3 471) pour en garder une vingtaine.
+// Gain mesuré par plans.py, voir docs/plans-execution.md.
+CREATE RANGE INDEX drove_for_season IF NOT EXISTS
+FOR ()-[r:DROVE_FOR]-() ON (r.season);
+
 // Vainqueurs, podiums : filtre sur la position d'arrivée (requête R3).
 CREATE RANGE INDEX race_result_position IF NOT EXISTS
 FOR (r:RaceResult) ON (r.position);

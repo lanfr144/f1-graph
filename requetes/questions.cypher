@@ -126,8 +126,8 @@ ORDER BY size(faits_marquants) DESC, r.date DESC;
 // @param b = null
 // @etape Course de référence | (prérequête) Race | prochaine course : date ≥ aujourd'hui SANS résultat, tri par date, LIMIT 1 ; à défaut la dernière disputée
 // @etape Grille | (Driver)-[:DROVE_FOR]->(Constructor) | DROVE_FOR.season = $saison_grille
-// @etape Paires d'adversaires | grille × grille | a.driverId < b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés
-// @etape Courses communes | (a)<-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]->(Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(b) | date de la course < $date_ref
+// @etape Partants de chaque course | (Driver de la grille)<-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]->(Race) | date de la course < $date_ref ; regroupés par course (une seule lecture de la carrière de chaque pilote)
+// @etape Paires d'adversaires | partants × partants, course par course | a.driverId < b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés
 // @etape Bilan | comptage par paire | devant = position inférieure ; tri par nombre de courses communes ; LIMIT 25
 // --- prérequête : prochaine course au calendrier ; à défaut (intersaison), la
 // dernière disputée ; et la saison dont la grille est retenue
@@ -141,17 +141,19 @@ RETURN coalesce(p.name, d.name) AS course_ref, coalesce(p.date, date()) AS date_
 // --- requête
 MATCH (d:Driver)-[:DROVE_FOR {season: $saison_grille}]->(:Constructor)
 WITH collect(DISTINCT d) AS grille
-UNWIND grille AS a
-UNWIND grille AS b
-WITH a, b
+UNWIND grille AS d
+MATCH (d)<-[:OF_DRIVER]-(x:RaceResult)-[:IN_RACE]->(r:Race)
+WHERE r.date < $date_ref
+WITH r, collect({pilote: d, position: x.position}) AS partants
+UNWIND partants AS pa
+UNWIND partants AS pb
+WITH r, pa, pb, pa.pilote AS a, pb.pilote AS b
 WHERE a.driverId < b.driverId
   AND ($a IS NULL OR $a IN [a.driverId, b.driverId])
   AND ($b IS NULL OR $b IN [a.driverId, b.driverId])
-MATCH (a)<-[:OF_DRIVER]-(ra:RaceResult)-[:IN_RACE]->(r:Race)<-[:IN_RACE]-(rb:RaceResult)-[:OF_DRIVER]->(b)
-WHERE r.date < $date_ref
 WITH a, b, count(r) AS courses, max(r.date) AS derniere_fois,
-     sum(CASE WHEN ra.position < rb.position THEN 1 ELSE 0 END) AS devant_a,
-     sum(CASE WHEN rb.position < ra.position THEN 1 ELSE 0 END) AS devant_b
+     sum(CASE WHEN pa.position < pb.position THEN 1 ELSE 0 END) AS devant_a,
+     sum(CASE WHEN pb.position < pa.position THEN 1 ELSE 0 END) AS devant_b
 RETURN $course_ref AS prochaine_course, a.fullName AS pilote_a, b.fullName AS pilote_b,
        courses, devant_a, devant_b, derniere_fois
 ORDER BY courses DESC, pilote_a
@@ -318,7 +320,8 @@ ORDER BY date;
 // @etape Période | (prérequête) Race | les cinq dernières saisons disputées
 // @etape Courses | Race | $de ≤ saison ≤ $a ; manche > 1 ; course disputée
 // @etape Favoris au départ | sous-requête : points cumulés AVANT la course | manches < manche courante ; tri décroissant ; LIMIT $top
-// @etape Duels | (Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver) × favoris | favori ≠ pilote lui-même ; duel gagné = position < position du favori
+// @etape Partants | (Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver) | regroupés par course (chaque course lue une seule fois)
+// @etape Duels | partants × favoris présents à cette course | favori ≠ pilote lui-même ; duel gagné = position < position du favori
 // @etape Résultat | par pilote | duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15
 // --- prérequête : les cinq dernières saisons disputées
 MATCH (r:Race) WHERE EXISTS { (r)<-[:IN_RACE]-(:RaceResult) }
@@ -336,11 +339,13 @@ CALL (r) {
   LIMIT $top
   RETURN collect(f) AS favoris
 }
-MATCH (r)<-[:IN_RACE]-(moi:RaceResult)-[:OF_DRIVER]->(d:Driver)
-UNWIND favoris AS f
-WITH r, d, moi, f WHERE f <> d
-MATCH (r)<-[:IN_RACE]-(lui:RaceResult)-[:OF_DRIVER]->(f)
-WITH d, count(*) AS duels, sum(CASE WHEN moi.position < lui.position THEN 1 ELSE 0 END) AS gagnes
+MATCH (r)<-[:IN_RACE]-(x:RaceResult)-[:OF_DRIVER]->(d:Driver)
+WITH r, favoris, collect({pilote: d, position: x.position}) AS partants
+UNWIND partants AS moi
+UNWIND [p IN partants WHERE p.pilote IN favoris] AS lui
+WITH moi, lui WHERE lui.pilote <> moi.pilote
+WITH moi.pilote AS d, count(*) AS duels,
+     sum(CASE WHEN moi.position < lui.position THEN 1 ELSE 0 END) AS gagnes
 WHERE duels >= $duels_min
 RETURN d.fullName AS pilote, duels, gagnes, round(100.0 * gagnes / duels, 1) AS pct_gagnes
 ORDER BY pct_gagnes DESC, duels DESC

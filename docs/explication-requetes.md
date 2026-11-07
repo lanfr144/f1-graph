@@ -104,8 +104,8 @@ flowchart TD
 |---|---|---|
 | 1. Course de référence | `(prérequête) Race` | prochaine course : date ≥ aujourd'hui SANS résultat, tri par date, LIMIT 1 ; à défaut la dernière disputée |
 | 2. Grille | `(Driver)-[:DROVE_FOR]->(Constructor)` | DROVE_FOR.season = $saison_grille |
-| 3. Paires d'adversaires | `grille × grille` | a.driverId < b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés |
-| 4. Courses communes | `(a)<-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]->(Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(b)` | date de la course < $date_ref |
+| 3. Partants de chaque course | `(Driver de la grille)<-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]->(Race)` | date de la course < $date_ref ; regroupés par course (une seule lecture de la carrière de chaque pilote) |
+| 4. Paires d'adversaires | `partants × partants, course par course` | a.driverId < b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés |
 | 5. Bilan | `comptage par paire` | devant = position inférieure ; tri par nombre de courses communes ; LIMIT 25 |
 
 ```mermaid
@@ -113,9 +113,9 @@ flowchart TD
   E1["<b>1. Course de référence</b><br/>(prérequête) Race<br/><i>prochaine course : date ≥ aujourd'hui SANS résultat, tri par date, LIMIT 1 ; à défaut la dernière disputée</i>"]
   E2["<b>2. Grille</b><br/>(Driver)-[:DROVE_FOR]-#gt;(Constructor)<br/><i>DROVE_FOR.season = $saison_grille</i>"]
   E1 --> E2
-  E3["<b>3. Paires d'adversaires</b><br/>grille × grille<br/><i>a.driverId #lt; b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés</i>"]
+  E3["<b>3. Partants de chaque course</b><br/>(Driver de la grille)#lt;-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]-#gt;(Race)<br/><i>date de la course #lt; $date_ref ; regroupés par course (une seule lecture de la carrière de chaque pilote)</i>"]
   E2 --> E3
-  E4["<b>4. Courses communes</b><br/>(a)#lt;-[:OF_DRIVER]-(RaceResult)-[:IN_RACE]-#gt;(Race)#lt;-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]-#gt;(b)<br/><i>date de la course #lt; $date_ref</i>"]
+  E4["<b>4. Paires d'adversaires</b><br/>partants × partants, course par course<br/><i>a.driverId #lt; b.driverId (chaque paire une fois) ; $a, $b s'ils sont donnés</i>"]
   E3 --> E4
   E5["<b>5. Bilan</b><br/>comptage par paire<br/><i>devant = position inférieure ; tri par nombre de courses communes ; LIMIT 25</i>"]
   E4 --> E5
@@ -241,8 +241,9 @@ flowchart TD
 | 1. Période | `(prérequête) Race` | les cinq dernières saisons disputées |
 | 2. Courses | `Race` | $de ≤ saison ≤ $a ; manche > 1 ; course disputée |
 | 3. Favoris au départ | `sous-requête : points cumulés AVANT la course` | manches < manche courante ; tri décroissant ; LIMIT $top |
-| 4. Duels | `(Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver) × favoris` | favori ≠ pilote lui-même ; duel gagné = position < position du favori |
-| 5. Résultat | `par pilote` | duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15 |
+| 4. Partants | `(Race)<-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]->(Driver)` | regroupés par course (chaque course lue une seule fois) |
+| 5. Duels | `partants × favoris présents à cette course` | favori ≠ pilote lui-même ; duel gagné = position < position du favori |
+| 6. Résultat | `par pilote` | duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15 |
 
 ```mermaid
 flowchart TD
@@ -251,10 +252,12 @@ flowchart TD
   E1 --> E2
   E3["<b>3. Favoris au départ</b><br/>sous-requête : points cumulés AVANT la course<br/><i>manches #lt; manche courante ; tri décroissant ; LIMIT $top</i>"]
   E2 --> E3
-  E4["<b>4. Duels</b><br/>(Race)#lt;-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]-#gt;(Driver) × favoris<br/><i>favori ≠ pilote lui-même ; duel gagné = position #lt; position du favori</i>"]
+  E4["<b>4. Partants</b><br/>(Race)#lt;-[:IN_RACE]-(RaceResult)-[:OF_DRIVER]-#gt;(Driver)<br/><i>regroupés par course (chaque course lue une seule fois)</i>"]
   E3 --> E4
-  E5["<b>5. Résultat</b><br/>par pilote<br/><i>duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15</i>"]
+  E5["<b>5. Duels</b><br/>partants × favoris présents à cette course<br/><i>favori ≠ pilote lui-même ; duel gagné = position #lt; position du favori</i>"]
   E4 --> E5
+  E6["<b>6. Résultat</b><br/>par pilote<br/><i>duels ≥ $duels_min ; tri par % de duels gagnés ; LIMIT 15</i>"]
+  E5 --> E6
 ```
 
 ## Q8 — Which participants are facing a former team or former teammates?

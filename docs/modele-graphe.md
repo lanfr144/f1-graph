@@ -114,7 +114,7 @@ graph LR
   cardinalités, codes ISO, cohérence de `TEAMMATE_OF`.
 - **Index** (`schema/03_index.cypher`), chacun justifié par une requête de
   `schema/04_requetes.cypher` : dates et saisons des courses, positions, durée des arrêts,
-  point géographique des circuits, recherche plein texte insensible aux accents sur les
+  engagements d'une saison (`drove_for_season`), point géographique des circuits, recherche plein texte insensible aux accents sur les
   pilotes, écuries, circuits et pays (« francais » trouve `FRA`).
 - **Migrations** (`schema/00_migrations.cypher`), idempotentes, appliquées en premier.
 

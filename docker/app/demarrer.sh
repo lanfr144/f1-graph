@@ -19,6 +19,20 @@ COMMANDE="python /app/pipeline.py --delta ${PIPELINE_OPTIONS}"
 journal "chargeur f1-graph : données ${F1_DONNEES}, base ${NEO4J_URI}, fuseau ${TZ:-UTC}"
 journal "diagnostic réseau : $(getent hosts "$(echo "$NEO4J_URI" | sed -E 's#.*://([^:/]+).*#\1#')" || echo 'hôte Neo4j non résolu')"
 
+# Attendre Neo4j : au redémarrage de la machine, Docker relance tous les conteneurs sans
+# respecter depends_on/service_healthy. Sans cette attente, le delta échoue (« connection
+# refused ») et le service reste malade jusqu'au créneau suivant (constaté le 6/11/2026).
+essais=0
+until python -c "import sys; sys.path.insert(0, '/app'); import charger; d, b = charger.connexion(); d.close()" 2>/dev/null; do
+  essais=$((essais + 1))
+  if [ "${essais}" -ge 60 ]; then
+    journal "ATTENTION : Neo4j injoignable après 5 minutes ; le delta est tenté quand même et dira pourquoi"
+    break
+  fi
+  [ "${essais}" -eq 1 ] && journal "attente de Neo4j (au plus 5 minutes)"
+  sleep 5
+done
+
 # Chargement initial au premier plan, SIGTERM relayé : `docker stop` l'interrompt
 # proprement (état enregistré) au lieu de le tuer.
 journal "chargement initial ou reprise : ${COMMANDE}"

@@ -153,6 +153,9 @@ puis **étape par étape** (ce que la requête parcourt, les filtres appliqués)
 `questions.py --doc`, qui commence par un guide de lecture des graphes et de Cypher.
 L'interface web montre les mêmes explications, plus le plan d'exécution de Neo4j.
 
+`plans.py` mesure le coût réel de chaque requête (`PROFILE`) et signale les parcours sans
+index ; méthode, mesures et choix d'index : [docs/plans-execution.md](docs/plans-execution.md).
+
 ```bash
 .venv/Scripts/python questions.py --liste
 ```

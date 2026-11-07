@@ -115,6 +115,17 @@ with st.expander("Comprendre la requête : étapes et filtres", expanded=False):
         st.graphviz_chart(plan_dot(plan), use_container_width=True)
     except Exception as e:  # le plan est une aide, pas une condition de la réponse
         st.caption(f"Plan d'exécution indisponible : {e}")
+    if st.button("Mesurer le coût réel (PROFILE)", key=f"profile-{choix}"):
+        import plans
+        with session() as s:
+            m = plans.profiler(s, r["cypher"], r["params"])
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Accès à la base", plans.n(m["hits"]))
+        c2.metric("Durée (ms)", plans.n(m["ms"]))
+        c3.metric("Lignes", m["lignes"])
+        st.dataframe(pd.DataFrame([{"opérateur": o["nom"], "lignes": o["lignes"], "accès": o["hits"],
+                                    "détails": o["details"][:150]} for o in m["ops"]]),
+                     hide_index=True, use_container_width=True)
 
 df = tableau(r["lignes"], r["colonnes"])
 if df.empty:
