@@ -14,6 +14,21 @@ st.caption("Chaque question cherche d'abord dans la base les valeurs pour lesque
 QUESTIONS = qmod.lire_questions()
 
 
+def bouton_tout_exporter() -> None:
+    """Le PDF de toutes les questions, préparé à la demande : il les exécute toutes."""
+    if st.button("Préparer le PDF de toutes les questions"):
+        import rapport_pdf
+        try:
+            with session() as s, st.spinner("Exécution des 16 questions…"):
+                st.session_state["pdf_toutes"] = rapport_pdf.construire(
+                    rapport_pdf.executer_sections(s, QUESTIONS, sorted(QUESTIONS)))
+        except Exception as e:
+            st.error(f"PDF impossible : {e}")
+    if "pdf_toutes" in st.session_state:
+        st.download_button("Télécharger le PDF de toutes les questions", st.session_state["pdf_toutes"],
+                           "f1-toutes-les-questions.pdf", "application/pdf")
+
+
 def couverture(q: dict) -> str:
     texte = q["notes"][0] if q["notes"] else ""
     for niveau, badge in (("NON COUVERTE", ":red-badge[non couverte]"), ("PARTIELLE", ":orange-badge[partielle]"),
@@ -35,6 +50,7 @@ st.info(sans_dollar(" ".join(q["notes"])))
 
 if not q["requete"]:
     st.warning("Pas de requête : la répondre exigerait des données que la source ne contient pas.")
+    bouton_tout_exporter()
     st.stop()
 
 # Paramètres modifiables : toute valeur saisie l'emporte sur la valeur fixe ou trouvée.
@@ -70,6 +86,20 @@ for pre in r["prerequetes"]:
 with st.expander("Requête exécutée", expanded=True):
     st.code(r["cypher"], language="cypher")
     st.caption(sans_dollar("Paramètres : " + ", ".join(f"${k} = {v}" for k, v in r["params"].items())))
+
+# Sauvegarde en PDF : les valeurs affichées ici, y compris les paramètres modifiés.
+colonne_a, colonne_b = st.columns(2)
+with colonne_a:
+    try:
+        import rapport_pdf
+        st.download_button(
+            "Télécharger cette réponse en PDF",
+            rapport_pdf.construire([{"numero": choix, "question": q, "resultat": r}]),
+            f"f1-question-{choix}.pdf", "application/pdf")
+    except Exception as e:  # le PDF est un service en plus : la réponse reste affichée
+        st.error(f"PDF impossible : {e}")
+with colonne_b:
+    bouton_tout_exporter()
 
 
 def plan_dot(plan: dict) -> str:

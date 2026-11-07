@@ -34,6 +34,16 @@ class PagesWeb(unittest.TestCase):
             with self.subTest(question=n):
                 self.executer("questions.py", s0=n)
 
+    def test_pdf_de_toutes_les_questions(self):
+        import charger
+        import rapport_pdf
+        qs = questions.lire_questions()
+        driver, base = charger.connexion()
+        with driver, driver.session(database=base) as s:
+            sections = rapport_pdf.executer_sections(s, qs, sorted(qs))
+        self.assertEqual([(x["numero"], x["erreur"]) for x in sections if x["erreur"]], [])
+        self.assertTrue(rapport_pdf.construire(sections).startswith(b"%PDF"))
+
     def test_pilote(self):
         at = self.executer("pilote.py")
         self.assertTrue(at.metric, "fiche pilote sans indicateurs")

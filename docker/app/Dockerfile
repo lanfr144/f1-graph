@@ -21,7 +21,7 @@ RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get check \
  && apt-get install -y --no-install-recommends \
-      ca-certificates tzdata iproute2 net-tools iputils-ping dnsutils curl traceroute \
+      ca-certificates tzdata fonts-dejavu-core iproute2 net-tools iputils-ping dnsutils curl traceroute \
  && apt-get autoremove -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
@@ -57,8 +57,10 @@ RUN for outil in ss netstat ip ifconfig ping dig nslookup curl traceroute superc
  && python -c "import neo4j, streamlit, pyvis" \
       || { echo "construction : module Python manquant (neo4j, streamlit ou pyvis)" >&2; exit 1; } \
  && python -m compileall -q /app \
- && python -c "import commun, extraire, transformer, charger, pipeline, manifeste, verifier, questions, sante, referentiel, complements, plans" \
+ && python -c "import commun, extraire, transformer, charger, pipeline, manifeste, verifier, questions, sante, referentiel, complements, plans, rapport_pdf" \
       || { echo "construction : un module du projet ne s'importe pas" >&2; exit 1; } \
+ && python -c "import rapport_pdf; rapport_pdf.polices()" \
+      || { echo "construction : polices du PDF manquantes (fonts-dejavu-core)" >&2; exit 1; } \
  && python -m unittest -q tests.test_unitaires \
       || { echo "construction : tests unitaires en échec" >&2; exit 1; } \
  && printf '*/5 * * * * true\n' > /tmp/essai.crontab && supercronic -test /tmp/essai.crontab \

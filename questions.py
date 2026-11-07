@@ -5,6 +5,7 @@
     python questions.py 16 --param a="'alonso'" --param b="'hamilton'"
     python questions.py --liste             # numéros, titres et couverture
     python questions.py 1 --sans-cypher     # réponses seules
+    python questions.py 1 6 --pdf sortie.pdf  # réponses en PDF
 
 Pour chaque question : les paramètres fixes (@param), puis chaque prérequête —
 son texte, puis les valeurs qu'elle a trouvées dans la base —, puis la requête
@@ -18,6 +19,7 @@ import argparse
 import re
 import sys
 import textwrap
+from pathlib import Path
 
 from commun import RACINE
 
@@ -245,6 +247,7 @@ def main() -> int:
     p.add_argument("--sans-cypher", action="store_true", help="ne pas afficher le texte des requêtes")
     p.add_argument("--explications", action="store_true",
                    help="afficher les étapes et filtres de chaque question, sans exécuter")
+    p.add_argument("--pdf", metavar="FICHIER", help="écrire les réponses dans ce PDF, sans les afficher")
     p.add_argument("--doc", action="store_true", help="écrire docs/explication-requetes.md et s'arrêter")
     args = p.parse_args()
 
@@ -270,6 +273,17 @@ def main() -> int:
 
     import charger
     driver, base = charger.connexion()
+    if args.pdf:
+        import rapport_pdf
+        with driver, driver.session(database=base) as session:
+            sections = rapport_pdf.executer_sections(session, questions, choisies, surcharges)
+        contenu = rapport_pdf.construire(sections)
+        Path(args.pdf).write_bytes(contenu)
+        print(f"{args.pdf} écrit : {len(choisies)} question(s), {len(contenu) // 1024} Ko")
+        echecs = [s for s in sections if s["erreur"]]
+        for s in echecs:
+            print(f"Q{s['numero']} en échec : {s['erreur']}", file=sys.stderr)
+        return 1 if echecs else 0
     erreurs = 0
     with driver, driver.session(database=base) as session:
         for n in choisies:

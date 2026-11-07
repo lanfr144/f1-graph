@@ -13,6 +13,7 @@ sys.path.insert(0, str(RACINE))
 
 import complements  # noqa: E402
 import questions  # noqa: E402
+import rapport_pdf  # noqa: E402
 import transformer as tr  # noqa: E402
 from charger import instructions  # noqa: E402
 
@@ -82,6 +83,33 @@ class LectureWikipedia(unittest.TestCase):
                     self.assertTrue(q["etapes"], "requête sans étapes @etape d'explication")
                     for e in q["etapes"]:
                         self.assertTrue(e["titre"] and e["motif"], e)
+
+
+class Pdf(unittest.TestCase):
+    QUESTION = {"titre": "Accents é œ ≥ → & <balise>", "simple": "En clair : Räikkönen & Pérez.",
+                "notes": ["Couverture : complète."]}
+
+    def _pdf(self, colonnes, lignes):
+        r = {"params": {"a": "x", "b": None}, "colonnes": colonnes, "lignes": lignes, "cypher": "MATCH (a)<-[:X]-(b)\n  RETURN a"}
+        contenu = rapport_pdf.construire([{"numero": 1, "question": self.QUESTION, "resultat": r}])
+        self.assertTrue(contenu.startswith(b"%PDF"))
+        return contenu
+
+    def test_tableau_simple_et_vide(self):
+        self._pdf(["pilote", "points"], [{"pilote": "Sergio Pérez <&>", "points": 12.5}, {"pilote": None, "points": 0}])
+        self._pdf(["pilote"], [])
+
+    def test_liste_plus_longue_qu_une_page(self):
+        # Une cellule qui dépasse la page ferait échouer reportlab si elle n'était pas découpée.
+        self._pdf(["course", "resultats"], [{"course": "2026-01", "resultats": [f"{i} Pilote {i}" for i in range(300)]}])
+
+    def test_parametres_remplaces_dans_le_texte(self):
+        self.assertEqual(rapport_pdf.avec_valeurs("les $semaines semaines, $inconnu", {"semaines": 4}),
+                         "les 4 semaines, $inconnu")
+
+    def test_question_sans_requete(self):
+        contenu = rapport_pdf.construire([{"numero": 14, "question": self.QUESTION, "resultat": None}])
+        self.assertTrue(contenu.startswith(b"%PDF"))
 
 
 class Conversions(unittest.TestCase):
